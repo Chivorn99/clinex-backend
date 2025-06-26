@@ -14,7 +14,7 @@ def extract_text_from_pdf(pdf_path):
 
     try:
         # This points to your Poppler installation
-        images = convert_from_path(pdf_path, poppler_path=r'C:\poppler\bin') # Use your correct poppler path
+        images = convert_from_path(pdf_path, poppler_path=r'C:\poppler\poppler-24.08.0') 
 
         # --- NEW DEBUG LOGGING ---
         print(f"Python Log: PDF successfully converted into {len(images)} image(s).", file=sys.stderr)
