@@ -3,7 +3,6 @@ import os
 import pytesseract
 from pdf2image import convert_from_path
 
-# This points to your Tesseract installation
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 def extract_text_from_pdf(pdf_path):
@@ -48,7 +47,6 @@ if __name__ == "__main__":
         pdf_file_path = sys.argv[1]
         extracted_text = extract_text_from_pdf(pdf_file_path)
         if extracted_text:
-            # This is the final text output
             print(extracted_text)
     else:
         print("Python Error: No PDF file path provided.", file=sys.stderr)
