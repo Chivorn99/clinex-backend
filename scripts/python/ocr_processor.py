@@ -1,4 +1,5 @@
 import sys
+import os
 import pytesseract
 from pdf2image import convert_from_path
 
@@ -9,12 +10,13 @@ def extract_text_from_pdf(pdf_path):
     """
     Extracts text from all pages of a PDF file and returns it as a single string.
     """
+    absolute_pdf_path = os.path.abspath(pdf_path)
     # --- NEW DEBUG LOGGING ---
-    print(f"Python Log: Script started. Attempting to process '{pdf_path}'.", file=sys.stderr)
+    print(f"Python Log: Script started. Attempting to process '{absolute_pdf_path}'.", file=sys.stderr)
 
     try:
         # This points to your Poppler installation
-        images = convert_from_path(pdf_path, poppler_path=r'C:\poppler\poppler-24.08.0') 
+        images = convert_from_path(absolute_pdf_path, poppler_path=r'C:\poppler\Library\bin') 
 
         # --- NEW DEBUG LOGGING ---
         print(f"Python Log: PDF successfully converted into {len(images)} image(s).", file=sys.stderr)
