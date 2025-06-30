@@ -42,9 +42,7 @@ class ProcessLabReport implements ShouldQueue
 
         if ($result->successful()) {
             $extractedText = $result->output();
-
             $parser = new ReportParserService();
-
             $structuredData = $parser->parse($extractedText);
 
             // Debugging logs
@@ -56,7 +54,7 @@ class ProcessLabReport implements ShouldQueue
 
             if (!empty($patientInfo['patient_id'])) {
                 $patient = Patient::updateOrCreate(
-                    ['patient_id' => $patientInfo['patient_id']], 
+                    ['patient_id' => $patientInfo['patient_id']],
                     [
                         'name' => $patientInfo['name'] ?? null,
                         'age' => $patientInfo['age'] ?? null,
@@ -67,7 +65,7 @@ class ProcessLabReport implements ShouldQueue
 
                 // Link the lab report to the patient
                 $this->labReport->update(['patient_id' => $patient->id]);
-                
+
                 Log::info("Patient created/updated for report ID: {$this->labReport->id}", ['patient_id' => $patient->patient_id, 'patient_db_id' => $patient->id]);
             }
 
@@ -84,6 +82,21 @@ class ProcessLabReport implements ShouldQueue
                 'field_name' => 'lab_data',
                 'value' => json_encode($labData, JSON_UNESCAPED_UNICODE),
             ]);
+            // 6. Save the test results data as JSON objects per section
+            if (!empty($structuredData['test_results'])) {
+                foreach ($structuredData['test_results'] as $sectionName => $results) {
+                    if (!empty($results)) {
+                        ExtractedData::create([
+                            'lab_report_id' => $this->labReport->id,
+                            'section' => $sectionName, // e.g., 'biochemistry', 'hematology'
+                            'field_name' => 'test_results',
+                            'value' => json_encode($results, JSON_UNESCAPED_UNICODE),
+                        ]);
+
+                        Log::info("Saved {$sectionName} test results for report ID: {$this->labReport->id}", ['test_count' => count($results)]);
+                    }
+                }
+            }
 
             $this->labReport->update(['status' => 'processed']);
         } else {
