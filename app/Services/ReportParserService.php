@@ -29,16 +29,21 @@ class ReportParserService
     private function cleanValue($value)
     {
         $value = preg_replace('/[^\x20-\x7E\p{L}\p{N}\p{P}\p{S}]/u', '', $value);
+        $value = preg_replace('/\b(eee|we|wee|cece|Lecce)\b/i', '', $value);
+        $value = preg_replace('/\s+/', ' ', $value);
+
         return trim($value);
     }
 
     private function parseTestSections(string $rawText): array
     {
         $sections = [];
-        $currentSection = null;
+        $currentSectionName = null;
+        $isBodySection = false; // Flag to track if we are inside the main body
 
         $sectionKeywords = ['BIOCHEMISTRY', 'ENZYMOLOGY', 'SEROLOGY / IMMUNOLOGY', 'HEMATOLOGY', 'DRUG URINE', 'URINE ANALYSIS', 'HEMOSTASIS'];
-        $stopKeywords = ['Validated By', 'Lab Technician:', 'អាសយដ្ឋាន:', 'លេខទូរស័ព្ទ:', 'HOSPITAL'];
+        $startKeyword = 'LABORATORY REPORT';
+        $stopKeywords = ['Validated By', 'Lab Technician:'];
 
         $lines = preg_split('/\r\n|\r|\n/', $rawText);
 
@@ -47,62 +52,88 @@ class ReportParserService
             if (empty($line))
                 continue;
 
-            // Check for stop keywords
+            // Check if we have reached the end of the body on this page
             foreach ($stopKeywords as $stopWord) {
                 if (str_contains($line, $stopWord)) {
-                    $currentSection = null;
-                    continue 2;
+                    $isBodySection = false; // We have left the body
+                    continue 2; // Move to the next line in the document
                 }
             }
 
-            // Check for section headers
+            // Check if we have entered the main body of test results
+            if (str_contains($line, $startKeyword)) {
+                $isBodySection = true;
+                continue; // Move to the next line
+            }
+
+            // If we are not in the body, skip all other processing
+            if (!$isBodySection) {
+                continue;
+            }
+
+            // Check if the line is a new section header (e.g., BIOCHEMISTRY)
             $isHeader = false;
             foreach ($sectionKeywords as $keyword) {
-                if (str_contains($line, $keyword)) {
-                    // Check for false positives (e.g., a test name containing the keyword)
-                    if (strlen($line) < strlen($keyword) + 5) {
-                        $currentSection = strtolower(str_replace([' ', '/'], '_', $keyword));
-                        $sections[$currentSection] = [];
-                        $isHeader = true;
-                        break;
+                // Check if the line primarily consists of the keyword
+                if (str_contains($line, $keyword) && strlen($line) < strlen($keyword) + 5) {
+                    $currentSectionName = strtolower(str_replace([' ', '/'], '_', $keyword));
+                    if (!isset($sections[$currentSectionName])) {
+                        $sections[$currentSectionName] = [];
                     }
+                    $isHeader = true;
+                    break;
                 }
             }
 
             if ($isHeader || str_contains($line, 'Reference Range')) {
                 continue;
             }
+            // --- Enhanced Parsing Logic ---
+            if ($currentSectionName !== null) {
+                // Skip lines that are mostly OCR noise
+                if (
+                    preg_match('/^[\.ewe\s]+$/', $line) ||
+                    strlen($line) < 5 ||
+                    substr_count($line, 'eee') > 2
+                ) {
+                    continue;
+                }
 
-            // --- NEW PARSING LOGIC ---
-            if ($currentSection !== null) {
-                // Split the line by a colon or at least 3 dots
-                $parts = preg_split('/(?::|\.{3,})/', $line, 2);
+                // Enhanced regex patterns for better test result extraction
+                $patterns = [
+                    // Pattern 1: Standard format with dots: "WBC ......: 6.8 10^3/uL (4.0-10.0)"
+                    '/^([A-Z][A-Za-z\s\/\(\)]+?)\s*\.{2,}\s*:?\s*([0-9\.]+|NEGATIVE|POSITIVE)\s*(.*)$/i',
 
-                if (count($parts) === 2) {
-                    $testName = $this->cleanValue(trim($parts[0]));
-                    $valuePart = trim($parts[1]);
+                    // Pattern 2: Simple colon format: "Morphine : NEGATIVE"
+                    '/^([A-Z][A-Za-z\s\/\(\)]+?)\s*:\s*([0-9\.]+|NEGATIVE|POSITIVE)\s*(.*)$/i',
 
-                    // Now, extract the primary value from the second part
-                    $value = null;
-                    $extras = null;
+                    // Pattern 3: Format without separator: "WBC 6.8 10^3/uL (4.0-10.0)"
+                    '/^([A-Z][A-Za-z\s\/\(\)]{2,})\s+([0-9\.]+|NEGATIVE|POSITIVE)\s+(.*)$/i'
+                ];
 
-                    // Regex to find the first word (like NEGATIVE) or number (like 9.8 or 100)
-                    if (preg_match('/^([A-Z0-9\.\-]+)/', $valuePart, $valueMatches)) {
-                        $value = $this->cleanValue($valueMatches[0]);
-                        // The rest of the string becomes the 'extras'
-                        $extras = $this->cleanValue(substr($valuePart, strlen($value)));
-                    }
+                foreach ($patterns as $pattern) {
+                    if (preg_match($pattern, $line, $matches)) {
+                        $testName = $this->cleanValue(trim($matches[1]));
+                        $value = $this->cleanValue(trim($matches[2]));
+                        $extras = isset($matches[3]) ? $this->cleanValue(trim($matches[3])) : '';
 
-                    if ($value !== null) {
-                        $sections[$currentSection][] = [
-                            'test_name' => $testName,
-                            'value' => $value,
-                            'extras' => $extras,
-                        ];
+                        // Additional filtering for test names
+                        if (
+                            strlen($testName) >= 3 &&
+                            !preg_match('/^[\.ewe\s]+$/', $testName) &&
+                            preg_match('/[A-Za-z]/', $testName)
+                        ) {
+
+                            $sections[$currentSectionName][] = [
+                                'test_name' => $testName,
+                                'value' => $value,
+                                'extras' => $extras,
+                            ];
+                            break; // Stop trying other patterns once we find a match
+                        }
                     }
                 }
             }
-            // --- END OF NEW LOGIC ---
         }
 
         return $sections;
