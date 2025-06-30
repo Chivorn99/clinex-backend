@@ -22,6 +22,7 @@ class LabReport extends Model
         'file_size',
         'mime_type',
         'patient_name',
+        'patient_id', 
         'report_date',
         'notes',
         'status',
@@ -97,5 +98,13 @@ class LabReport extends Model
     public function scopeUploadedBetween($query, $startDate, $endDate)
     {
         return $query->whereBetween('uploaded_at', [$startDate, $endDate]);
+    }
+
+    /**
+     * Get the patient that owns this lab report.
+     */
+    public function patient()
+    {
+        return $this->belongsTo(Patient::class);
     }
 }

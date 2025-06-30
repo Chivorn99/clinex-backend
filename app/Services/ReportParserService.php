@@ -44,16 +44,18 @@ class ReportParserService
     private function parsePatientInfo(string $text): array
     {
         $patientInfo = [];
+        
+        // OCR pattern definitions
         $patterns = [
-            'name' => '/(?:thifs\/Name|ឈ្មោះ\/Name)\s*:\s*([^\r\n]+?)(?:\s+(?:Uis\/Age|អាយុ\/Age)|$)/',
-            'patient_id' => '/Patient ID\s*:\s*([^\s]+)/',
-            'age' => '/(?:Uis\/Age|អាយុ\/Age)\s*:\s*([^\s]+)/',
-            'gender' => '/(?:ភេទ\/Gender)\s*:\s*([^\r\n]+)/',
-            'lab_id' => '/Lab ID\s*:\s*([^\s]+)/',
-            'collected_date' => '/Collected Date\s*:\s*([^\r\n]+?)(?:\s+Analysis Date|$)/',
-            'analysis_date' => '/Analysis Date\s*:\s*([^\r\n]+?)(?:\s+Requested By|$)/',
-            'requested_by' => '/Requested By\s*:\s*([^\r\n]+)/',
-            'phone' => '/(?:gifig\/Phone)\s*:\s*([^\r\n]+)/'
+            'name' => '/thifs\/Name\s*:\s*([^\/\r\n]+?)(?:\s+\w+\/Age|$)/i',
+            'patient_id' => '/Patient\s*ID\s*:\s*([A-Z0-9]+)/i',
+            'age' => '/(\d+Y(?:,?\d+M)?(?:,?\d+D)?)\s+ti\s*[^\w]*\/Gender/i',
+            'gender' => '/Gender\s*:\s*(\w+)/i',
+            'lab_id' => '/Lab\s*ID\s*:\s*([A-Z0-9]+)/i',
+            'collected_date' => '/Collected\s*Date[^:]*:\s*([0-9\/\s:]+?)(?:\s+Analysis|$)/i',
+            'analysis_date' => '/Analysis\s*Date[^:]*:\s*([0-9\/\s:]+?)(?:\s+Requested|$)/i',
+            'requested_by' => '/Requested\s*By\s*:\s*([^\r\n]+)/i',
+            'phone' => '/giaig\/Phone\s+(\d+)/i'
         ];
 
         $lines = explode("\n", $text);
@@ -64,8 +66,8 @@ class ReportParserService
                 if (preg_match($pattern, $line, $matches)) {
                     $value = $this->cleanValue(trim($matches[1]));
 
-                    // Overwrite check
-                    if (!isset($patientInfo[$key])) {
+                    // Overwritten prevention
+                    if (!isset($patientInfo[$key]) && !empty($value)) {
                         $patientInfo[$key] = $value;
                     }
                 }

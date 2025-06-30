@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\LabReport;
+use App\Models\Patient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -42,26 +43,47 @@ class ProcessLabReport implements ShouldQueue
         if ($result->successful()) {
             $extractedText = $result->output();
 
-            // 1. Instantiate our new parser service
             $parser = new ReportParserService();
 
-            // 2. Parse the raw text to get structured data
             $structuredData = $parser->parse($extractedText);
 
-            // 3. Log the structured data to see the result
+            // Debugging logs
+            Log::info("Raw OCR text for report ID: {$this->labReport->id}", ['ocr_text' => substr($extractedText, 0, 1000)]);
             Log::info("Parsed structured data for report ID: {$this->labReport->id}", $structuredData);
 
-            // 4. Save the parsed data to the database
-            foreach ($structuredData['patient_info'] as $fieldName => $value) {
-                if ($value) { // Only save if a value was found
-                    ExtractedData::create([
-                        'lab_report_id' => $this->labReport->id,
-                        'section' => 'patient_info',
-                        'field_name' => $fieldName,
-                        'value' => $value,
-                    ]);
-                }
+            $patientInfo = $structuredData['patient_info'];
+            $patient = null;
+
+            if (!empty($patientInfo['patient_id'])) {
+                $patient = Patient::updateOrCreate(
+                    ['patient_id' => $patientInfo['patient_id']], 
+                    [
+                        'name' => $patientInfo['name'] ?? null,
+                        'age' => $patientInfo['age'] ?? null,
+                        'gender' => $patientInfo['gender'] ?? null,
+                        'phone' => $patientInfo['phone'] ?? null,
+                    ]
+                );
+
+                // Link the lab report to the patient
+                $this->labReport->update(['patient_id' => $patient->id]);
+                
+                Log::info("Patient created/updated for report ID: {$this->labReport->id}", ['patient_id' => $patient->patient_id, 'patient_db_id' => $patient->id]);
             }
+
+            $labData = [
+                'lab_id' => $patientInfo['lab_id'] ?? null,
+                'collected_date' => $patientInfo['collected_date'] ?? null,
+                'analysis_date' => $patientInfo['analysis_date'] ?? null,
+                'requested_by' => $patientInfo['requested_by'] ?? null,
+            ];
+
+            ExtractedData::create([
+                'lab_report_id' => $this->labReport->id,
+                'section' => 'lab_info',
+                'field_name' => 'lab_data',
+                'value' => json_encode($labData, JSON_UNESCAPED_UNICODE),
+            ]);
 
             $this->labReport->update(['status' => 'processed']);
         } else {
