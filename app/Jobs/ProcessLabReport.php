@@ -10,6 +10,8 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
+use App\Services\ReportParserService;
+use App\Models\ExtractedData;
 
 class ProcessLabReport implements ShouldQueue
 {
@@ -32,9 +34,7 @@ class ProcessLabReport implements ShouldQueue
         Log::info("Processing lab report ID: {$this->labReport->id}");
         $this->labReport->update(['status' => 'processing']);
 
-        // Get the full, absolute path to the stored PDF
         $pdfPath = $this->labReport->getFullPath();
-
         $pythonScriptPath = base_path('scripts/python/ocr_processor.py');
 
         $result = Process::run("python \"{$pythonScriptPath}\" \"{$pdfPath}\"");
@@ -42,12 +42,26 @@ class ProcessLabReport implements ShouldQueue
         if ($result->successful()) {
             $extractedText = $result->output();
 
-            Log::info("Successfully extracted text from report ID: {$this->labReport->id}");
+            // 1. Instantiate our new parser service
+            $parser = new ReportParserService();
 
-            // For now, let's just log the first 500 characters
-            Log::info("Extracted Text (sample): " . substr($extractedText, 0, 500));
+            // 2. Parse the raw text to get structured data
+            $structuredData = $parser->parse($extractedText);
 
-            // In the future, we will save this text to the extracted_data table
+            // 3. Log the structured data to see the result
+            Log::info("Parsed structured data for report ID: {$this->labReport->id}", $structuredData);
+
+            // 4. Save the parsed data to the database
+            foreach ($structuredData['patient_info'] as $fieldName => $value) {
+                if ($value) { // Only save if a value was found
+                    ExtractedData::create([
+                        'lab_report_id' => $this->labReport->id,
+                        'section' => 'patient_info',
+                        'field_name' => $fieldName,
+                        'value' => $value,
+                    ]);
+                }
+            }
 
             $this->labReport->update(['status' => 'processed']);
         } else {
