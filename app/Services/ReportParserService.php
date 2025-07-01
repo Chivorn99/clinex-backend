@@ -26,270 +26,250 @@ class ReportParserService
         return $structuredData;
     }
 
-    private function cleanValue($value)
-    {
-        // Remove non-printable characters and OCR noise
-        $value = preg_replace('/[^\x20-\x7E\p{L}\p{N}\p{P}\p{S}]/u', '', $value);
-
-        // Remove common OCR noise patterns - more aggressive
-        $value = preg_replace('/\b(eee|we|wee|cece|Lecce|ece|ee|0000-|00-|0-|os)\b/i', '', $value);
-        
-        // Fix common OCR mistakes in medical terms
-        $value = str_replace(['acide', 'Gamm ', 'Transferas'], ['acid', 'Gamma ', 'Transferase'], $value);
-
-        // Remove excessive dots that aren't part of decimal numbers
-        $value = preg_replace('/\.{3,}/', '', $value);
-
-        // Clean up multiple spaces
-        $value = preg_replace('/\s+/', ' ', $value);
-
-        // Remove trailing OCR artifacts from test names
-        $value = preg_replace('/\s+(0+\-?|[0-9]+\-?)$/', '', $value);
-
-        // Remove leading/trailing non-alphanumeric characters except for valid ones
-        $value = preg_replace('/^[^\w\-\+\(\<\>]+|[^\w\-\+\)\<\>]+$/', '', $value);
-
-        return trim($value);
-    }
-
     private function parseTestSections(string $rawText): array
     {
-        $sections = [];
+        $allSectionsData = [];
         $currentSectionName = null;
-        $isBodySection = false;
+        $isBody = false;
 
-        $startKeyword = 'LABORATORY REPORT';
-        $stopKeywords = ['Validated By', 'Lab Technician:', 'Report Generated', 'Page'];
+        // Include OCR variations of section keywords
+        $sectionKeywords = [
+            'BIOCHEMISTRY' => 'biochemistry',
+            'BIOCHIMISTRY' => 'biochemistry',  // OCR variation
+            'ENZYMOLOGY' => 'enzymology',
+            'HEMATOLOGY' => 'hematology',
+            'DRUG URINE' => 'drug_urine',
+            'URINE ANALYSIS' => 'urine_analysis',
+            'HEMOSTASIS' => 'hemostasis'
+        ];
+
+        $startPattern = '/LABORATORY\s+REPORT/i';
+        $stopPattern = '/(?:Validated\s+By|Lab\s+Technician:)/i';
+        $tableHeaderPattern = '/\b(?:Results?|Unit|Reference|Range|Flag)\b/i';
 
         $lines = preg_split('/\r\n|\r|\n/', $rawText);
+        $sectionLines = [];
 
-        foreach ($lines as $lineNumber => $line) {
-            $originalLine = $line;
+        // First, group lines by the section they belong to
+        for ($i = 0; $i < count($lines); $i++) {
+            $line = $lines[$i];
             $trimmedLine = trim($line);
 
             if (empty($trimmedLine))
                 continue;
 
-            // Check if we've reached the end of the body
-            $shouldStop = false;
-            foreach ($stopKeywords as $stopWord) {
-                if (stripos($trimmedLine, $stopWord) !== false) {
-                    $isBodySection = false;
-                    $shouldStop = true;
-                    break;
+            // Check for start of body section
+            if (preg_match($startPattern, $trimmedLine)) {
+                $isBody = true;
+                continue;
+            }
+
+            if (!$isBody)
+                continue;
+
+            // Check for end of body section
+            if (preg_match($stopPattern, $trimmedLine)) {
+                $isBody = false;
+                $currentSectionName = null;
+                continue;
+            }
+
+            // Flexible header detection as per requirements
+            $isHeader = false;
+            $lineAbove = isset($lines[$i - 1]) ? trim($lines[$i - 1]) : '';
+
+            foreach ($sectionKeywords as $keyword => $normalizedName) {
+                if (stripos($trimmedLine, $keyword) !== false) {
+                    // Check if line above contains "LABORATORY REPORT" OR line is short and title-like
+                    $followsReport = preg_match($startPattern, $lineAbove);
+                    $isShortTitle = strlen($trimmedLine) < strlen($keyword) + 15;
+
+                    if ($followsReport || $isShortTitle) {
+                        $currentSectionName = $normalizedName;
+                        if (!isset($sectionLines[$currentSectionName])) {
+                            $sectionLines[$currentSectionName] = [];
+                        }
+                        $isHeader = true;
+                        break;
+                    }
                 }
             }
-            if ($shouldStop)
+
+            if ($isHeader)
                 continue;
 
-            // Check if we've entered the main body of test results
-            if (stripos($trimmedLine, $startKeyword) !== false) {
-                $isBodySection = true;
+            // Skip table headers
+            if (preg_match($tableHeaderPattern, $trimmedLine))
                 continue;
-            }
 
-            // If we're not in the body section, skip processing
-            if (!$isBodySection) {
-                continue;
-            }
-
-            // Detect section headers - now considering center alignment
-            if ($this->isSectionHeader($trimmedLine, $originalLine)) {
-                $currentSectionName = $this->normalizeSectionName($trimmedLine);
-
-                if (!isset($sections[$currentSectionName])) {
-                    $sections[$currentSectionName] = [];
-                }
-                continue;
-            }
-
-            // Skip lines that are clearly not test results
-            if ($this->shouldSkipLine($trimmedLine)) {
-                continue;
-            }
-
-            // Parse test results if we have a current section
+            // Add line to current section if valid
             if ($currentSectionName !== null) {
-                $testResult = $this->parseTestLine($trimmedLine);
-                if ($testResult !== null) {
-                    $sections[$currentSectionName][] = $testResult;
-                }
+                $sectionLines[$currentSectionName][] = $line;
             }
         }
 
-        return $sections;
+        // Parse each section block using the new "Clean, Then Split" strategy
+        foreach ($sectionLines as $sectionName => $lines) {
+            $allSectionsData[$sectionName] = $this->parseTestLines($lines);
+        }
+
+        return $allSectionsData;
     }
 
-    private function isSectionHeader($trimmedLine, $originalLine = null): bool
+    /**
+     * Parse test lines using "Clean, Then Split" strategy
+     */
+    private function parseTestLines(array $lines): array
     {
-        $upperLine = strtoupper(trim($trimmedLine));
+        $results = [];
 
-        // Skip empty or very short lines
-        if (strlen($upperLine) < 3) return false;
+        foreach ($lines as $line) {
+            // Step 1: Clean the line aggressively
+            $cleanedLine = $this->cleanTestLine($line);
 
-        // Check basic header characteristics
-        $isAllCaps = preg_match('/^[A-Z\s\/\-\(\)&_]+$/', $upperLine);
-        $reasonableLength = strlen($upperLine) >= 4 && strlen($upperLine) <= 30;
-        $noNumbers = !preg_match('/\d/', $upperLine);
-        $hasLeadingSpaces = $originalLine !== null && preg_match('/^\s{5,}/', $originalLine);
-        
-        // Exclude lines that are clearly not headers
-        $hasResultPatterns = preg_match('/[\.]{2,}|:\s*\d|:\s*(NEGATIVE|POSITIVE)|mg\/dL|U\/L|g\/dL/i', $trimmedLine);
-        $isTableHeader = preg_match('/\b(Results?|Unit|Reference|Range|Flag)\b/i', $upperLine);
-        $isTestResult = preg_match('/\b(NEGATIVE|POSITIVE|NORMAL|ABNORMAL)\b/', $upperLine);
-        
-        // Known problematic patterns that should NOT be headers
-        $knownNonHeaders = [
-            'URINE ANALYSIS', // This appears in test results, not just as header
-            'RESULTS',
-            'TRANSAMINASE',
-            'UNIT', 
-            'REFERENCE',
-            'RANGE',
-            'FLAG',
-            'TEST'
-        ];
-        
-        // Skip if it matches known non-header patterns exactly
-        if (in_array($upperLine, $knownNonHeaders)) {
-            return false;
+            // Skip obviously invalid lines
+            if (strlen($cleanedLine) < 3)
+                continue;
+
+            // Step 2: Split the line into test name and value parts
+            $parts = $this->splitTestLine($cleanedLine);
+
+            if ($parts === null)
+                continue;
+
+            [$testNamePart, $valuePart] = $parts;
+
+            // Step 3: Surgically extract the value
+            $extractedData = $this->surgicalValueExtractor($testNamePart, $valuePart);
+
+            if ($extractedData !== null) {
+                $results[] = $extractedData;
+            }
         }
-        
-        // Must be all caps, reasonable length, no numbers, and either:
-        // 1. Has leading spaces (centered), OR
-        // 2. Is a standalone line that looks like a section header
-        return $isAllCaps && 
-               $reasonableLength && 
-               $noNumbers && 
-               !$hasResultPatterns && 
-               !$isTableHeader && 
-               !$isTestResult &&
-               ($hasLeadingSpaces || strlen($upperLine) >= 8);
+
+        return $results;
     }
 
-    private function normalizeSectionName($line): string
+    /**
+     * Aggressively clean OCR noise from test lines
+     */
+    private function cleanTestLine(string $line): string
     {
-        $normalized = strtolower(trim($line));
-        $normalized = preg_replace('/[^a-z0-9]+/', '_', $normalized);
-        $normalized = preg_replace('/_{2,}/', '_', $normalized);
-        return trim($normalized, '_');
+        // Remove common OCR noise patterns
+        $cleaned = preg_replace('/\s*(?:we|eee|ee|os|cece|wee)\s*\.?\s*/i', ' ', $line);
+
+        // Remove excessive dots but preserve dot separators (2+ dots)
+        $cleaned = preg_replace('/\.{4,}/', '...', $cleaned);
+
+        // Clean up multiple spaces
+        $cleaned = preg_replace('/\s+/', ' ', $cleaned);
+
+        // Remove trailing numbers with dashes (OCR artifacts)
+        $cleaned = preg_replace('/\s+\d+\-?\s*$/', '', $cleaned);
+
+        return trim($cleaned);
     }
 
-    private function shouldSkipLine($line): bool
+    /**
+     * Split cleaned line into test name and value parts
+     */
+    private function splitTestLine(string $cleanedLine): ?array
     {
-        // Skip reference range lines
-        if (stripos($line, 'Reference Range') !== false || stripos($line, 'Normal Range') !== false) {
-            return true;
-        }
-
-        // Skip lines with only dots, spaces, or OCR noise
-        if (preg_match('/^[\.ewe\s]+$/', $line)) {
-            return true;
-        }
-
-        // Skip very short lines
-        if (strlen($line) < 3) {
-            return true;
-        }
-
-        // Skip lines with excessive OCR noise
-        if (substr_count($line, 'eee') > 2) {
-            return true;
-        }
-
-        // Skip lines that are clearly formatting artifacts
-        if (preg_match('/^[\.:\s\-_]+$/', $line)) {
-            return true;
-        }
-
-        return false;
-    }
-
-    private function parseTestLine($line): ?array
-    {
-        // Skip obvious non-test lines early
-        if (preg_match('/^(Results?|Unit|Reference|Range|Flag|TEST)\s/i', $line)) {
-            return null;
-        }
-        
-        // Skip lines that are just section names repeated
-        $upperLine = strtoupper(trim($line));
-        if (preg_match('/^(URINE ANALYSIS|HEMATOLOGY|BIOCHEMISTRY|ENZYMOLOGY|DRUG URINE)(\s+\d+)?(\s+TEST)?$/i', $upperLine)) {
-            return null;
-        }
-
-        // Enhanced patterns for better test result extraction
-        $patterns = [
-            // Pattern 1: "Test Name ................: Value Unit (Range) Flag"
-            '/^([A-Za-z][A-Za-z0-9\s\/\(\)\-\%\,\.\&]+?)\s*\.{2,}\s*:?\s*([0-9\.\-]+|NEGATIVE|POSITIVE|NOT\s+DETECTED|DETECTED|NORMAL|ABNORMAL)\s*([A-Za-z\/\^0-9\(\)\%]*)\s*(\([^\)]*\))?\s*([A-Z]?)$/i',
-
-            // Pattern 2: "Test Name : Value Unit (Range) Flag"  
-            '/^([A-Za-z][A-Za-z0-9\s\/\(\)\-\%\,\.\&]+?)\s*:\s*([0-9\.\-]+|NEGATIVE|POSITIVE|NOT\s+DETECTED|DETECTED|NORMAL|ABNORMAL)\s*([A-Za-z\/\^0-9\(\)\%]*)\s*(\([^\)]*\))?\s*([A-Z]?)$/i',
-
-            // Pattern 3: Tabular format "Test Name    Value    Unit    (Range)    Flag"
-            '/^([A-Za-z][A-Za-z0-9\s\/\(\)\-\%\,\.\&]{2,}?)\s{2,}([0-9\.\-]+|NEGATIVE|POSITIVE)\s+([A-Za-z\/\^0-9\(\)\%]*)\s*(\([^\)]*\))?\s*([A-Z]?)$/i',
-
-            // Pattern 4: Simple format "Test Name Value" (no separators)
-            '/^([A-Za-z][A-Za-z0-9\s\/\(\)\-\%\,\.\&]+?)\s+([0-9\.\-]+|NEGATIVE|POSITIVE|NOT\s+DETECTED|DETECTED)\s*$/i'
+        // Try different separator patterns in order of preference
+        $separatorPatterns = [
+            '/\s*\.{2,}\s*:\s*/',  // dots followed by colon: "Test ..... : value"
+            '/\s*\.{2,}\s*/',      // just dots: "Test ..... value"
+            '/\s*:\s*/',           // just colon: "Test : value"
         ];
 
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $line, $matches)) {
-                $testName = $this->cleanValue($matches[1]);
-                $value = $this->cleanValue($matches[2]);
-                $unit = isset($matches[3]) ? $this->cleanValue($matches[3]) : '';
-                $referenceRange = isset($matches[4]) ? $this->cleanValue($matches[4]) : '';
-                $flag = isset($matches[5]) ? $this->cleanValue($matches[5]) : '';
-
-                // Clean up test name more aggressively
-                $testName = preg_replace('/\s+0+\-?\s*$/', '', $testName); // Remove trailing "0-" artifacts
-                $testName = preg_replace('/\b(os|we|eee)\s+/i', '', $testName); // Remove OCR noise words
-                $testName = trim($testName);
-
-                // Validation for test names
-                if (
-                    strlen($testName) >= 2 &&
-                    !preg_match('/^[\.ewe\s0-9\-]+$/', $testName) &&
-                    preg_match('/[A-Za-z]/', $testName) &&
-                    !empty($value) &&
-                    !preg_match('/^(Results?|Unit|Reference|Range|Flag|TEST)$/i', $testName) &&
-                    // Don't capture obvious section headers as test names
-                    !preg_match('/^(URINE ANALYSIS|HEMATOLOGY|BIOCHEMISTRY|ENZYMOLOGY|DRUG URINE)$/i', $testName)
-                ) {
-                    $result = [
-                        'test_name' => $testName,
-                        'value' => $value
-                    ];
-
-                    // Add optional fields if they exist and are meaningful
-                    if (!empty($unit) && !preg_match('/^[0-9\(\)\-\s]+$/', $unit)) {
-                        $result['unit'] = $unit;
-                    }
-                    if (!empty($referenceRange) && preg_match('/\([^\)]+\)/', $referenceRange)) {
-                        $result['reference_range'] = $referenceRange;
-                    }
-                    if (!empty($flag) && preg_match('/^[A-Z]$/', $flag)) {
-                        $result['flag'] = $flag;
-                    }
-
-                    return $result;
-                }
+        foreach ($separatorPatterns as $pattern) {
+            $parts = preg_split($pattern, $cleanedLine, 2);
+            if (count($parts) === 2 && !empty(trim($parts[0])) && !empty(trim($parts[1]))) {
+                return [trim($parts[0]), trim($parts[1])];
             }
         }
 
         return null;
     }
 
-    // Example usage function to demonstrate the expected JSON output
-    private function getStructuredLabResults(string $rawText): array
+    /**
+     * Surgical Value Extractor - operates in order of priority
+     */
+    private function surgicalValueExtractor(string $testNamePart, string $valuePart): ?array
     {
-        $sections = $this->parseTestSections($rawText);
+        // Clean the test name
+        $testName = $this->cleanValue($testNamePart);
 
-        return [
-            'patient_info' => $this->parsePatientInfo($rawText), // Use your existing function
-            'test_sections' => $sections,
-            'parsed_at' => date('Y-m-d H:i:s')
+        // Validate test name
+        if (!$this->isValidTestName($testName)) {
+            return null;
+        }
+
+        // Step 1: Search for text-based keywords first (highest priority)
+        $textValues = ['NEGATIVE', 'POSITIVE', 'NORMAL', 'ABNORMAL', 'NOT DETECTED', 'DETECTED'];
+        foreach ($textValues as $textValue) {
+            if (preg_match('/\b' . preg_quote($textValue, '/') . '\b/i', $valuePart, $matches)) {
+                $value = strtoupper($matches[0]);
+                // $extras = trim(str_replace($matches[0], '', $valuePart));
+                // $extras = $this->cleanValue($extras);
+
+                // return $this->buildTestResult($testName, $value, $extras);
+                return $this->buildTestResult($testName, $value, null);
+            }
+        }
+
+        // Step 2: Search for numerical values (second priority)
+        if (preg_match('/^([0-9]+\.?[0-9]*)\s*(.*)/', $valuePart, $matches)) {
+            $value = $matches[1];
+            // $extras = trim($matches[2]);
+            // $extras = $this->cleanValue($extras);
+
+            // return $this->buildTestResult($testName, $value, $extras);
+            return $this->buildTestResult($testName, $value, null);
+        }
+
+        // Step 3: Fallback - take first word as value
+        if (preg_match('/^(\S+)\s*(.*)/', $valuePart, $matches)) {
+            $value = $this->cleanValue($matches[1]);
+            // $extras = trim($matches[2]);
+            // $extras = $this->cleanValue($extras);
+
+            if (!empty($value)) {
+                // return $this->buildTestResult($testName, $value, $extras);
+                return $this->buildTestResult($testName, $value, null);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Validate if test name is meaningful
+     */
+    private function isValidTestName(string $testName): bool
+    {
+        return strlen($testName) > 1 &&
+            !preg_match('/^\d+$/', $testName) && // Not just numbers
+            !preg_match('/^[\.ewe\s]+$/i', $testName) && // Not just OCR noise
+            preg_match('/[A-Za-z]/', $testName) && // Contains at least one letter
+            !preg_match('/^(?:Unit|Reference|Range|Flag|Results?)$/i', $testName); // Not table headers
+    }
+
+    /**
+     * Build the final test result array
+     */
+    private function buildTestResult(string $testName, string $value, ?string $extras): array
+    {
+        $result = [
+            'test_name' => $testName,
+            'value' => $value,
         ];
+
+        // if (!empty($extras) && strlen($extras) > 1) {
+        //     $result['extras'] = $extras;
+        // }
+
+        return $result;
     }
 
     private function parsePatientInfo(string $text): array
@@ -333,6 +313,44 @@ class ReportParserService
 
         return $patientInfo;
     }
+
+    private function cleanValue($value)
+    {
+        if (empty($value))
+            return '';
+
+        // Remove non-printable characters and OCR noise
+        $value = preg_replace('/[^\x20-\x7E\p{L}\p{N}\p{P}\p{S}]/u', '', $value);
+
+        // Remove common OCR noise patterns in one comprehensive regex
+        $value = preg_replace('/\b(?:eee|we|wee|cece|Lecce|ece|ee|os|0{2,}\-?)\b/i', '', $value);
+
+        // Fix common OCR mistakes in medical terms
+        $medicalTermFixes = [
+            'acide' => 'acid',
+            'Gamm ' => 'Gamma ',
+            'Transferas' => 'Transferase',
+            'Cholesterole' => 'Cholesterol',
+            'Tryglyceride' => 'Triglyceride',
+            'Uric acide' => 'Uric acid', // Be specific
+        ];
+        $value = str_replace(array_keys($medicalTermFixes), array_values($medicalTermFixes), $value);
+
+        // Remove excessive dots (3 or more) that aren't part of decimal numbers
+        $value = preg_replace('/\.{3,}/', '', $value);
+
+        // Clean up multiple whitespace characters
+        $value = preg_replace('/\s+/', ' ', $value);
+
+        // Remove trailing OCR artifacts from test names (numbers followed by dash)
+        $value = preg_replace('/\s+\d+\-?\s*$/', '', $value);
+
+        // Remove leading/trailing non-alphanumeric characters except valid ones
+        $value = preg_replace('/^[^\w\-\+\(\<\>]+|[^\w\-\+\)\<\>\.]+$/', '', $value);
+
+        return trim($value);
+    }
+
 
 
 }
