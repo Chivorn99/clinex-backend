@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\OcrCorrection;
+
 class ReportParserService
 {
     /**
@@ -28,20 +30,12 @@ class ReportParserService
 
     private function parseTestSections(string $rawText): array
     {
+        // Start with known sections + dynamically detected sections
+        $allSections = $this->getAllSections($rawText);
+        
         $allSectionsData = [];
         $currentSectionName = null;
         $isBody = false;
-
-        // Include OCR variations of section keywords
-        $sectionKeywords = [
-            'BIOCHEMISTRY' => 'biochemistry',
-            'BIOCHIMISTRY' => 'biochemistry',  // OCR variation
-            'ENZYMOLOGY' => 'enzymology',
-            'HEMATOLOGY' => 'hematology',
-            'DRUG URINE' => 'drug_urine',
-            'URINE ANALYSIS' => 'urine_analysis',
-            'HEMOSTASIS' => 'hemostasis'
-        ];
 
         $startPattern = '/LABORATORY\s+REPORT/i';
         $stopPattern = '/(?:Validated\s+By|Lab\s+Technician:)/i';
@@ -74,11 +68,11 @@ class ReportParserService
                 continue;
             }
 
-            // Flexible header detection as per requirements
+            // Flexible header detection using all sections (known + dynamic)
             $isHeader = false;
             $lineAbove = isset($lines[$i - 1]) ? trim($lines[$i - 1]) : '';
 
-            foreach ($sectionKeywords as $keyword => $normalizedName) {
+            foreach ($allSections as $keyword => $normalizedName) {
                 if (stripos($trimmedLine, $keyword) !== false) {
                     // Check if line above contains "LABORATORY REPORT" OR line is short and title-like
                     $followsReport = preg_match($startPattern, $lineAbove);
@@ -108,12 +102,155 @@ class ReportParserService
             }
         }
 
-        // Parse each section block using the new "Clean, Then Split" strategy
+        // Parse each section block using the "Clean, Then Split" strategy
         foreach ($sectionLines as $sectionName => $lines) {
             $allSectionsData[$sectionName] = $this->parseTestLines($lines);
         }
 
         return $allSectionsData;
+    }
+
+    /**
+     * Get all sections: known + dynamically detected
+     */
+    private function getAllSections(string $rawText): array
+    {
+        // Start with known sections
+        $knownSections = $this->getKnownSections();
+        
+        // Add dynamically detected sections
+        $dynamicSections = $this->detectSectionHeaders($rawText);
+        
+        // Merge them (known sections take priority)
+        return array_merge($dynamicSections, $knownSections);
+    }
+
+    /**
+     * Get predefined known sections with OCR variations
+     */
+    private function getKnownSections(): array
+    {
+        return [
+            // Primary sections with OCR variations
+            'BIOCHEMISTRY' => 'biochemistry',
+            'BIOCHIMISTRY' => 'biochemistry',  // OCR variation
+            'ENZYMOLOGY' => 'enzymology',
+            'ENZIMOLOGY' => 'enzymology',      // OCR variation
+            'HEMATOLOGY' => 'hematology',
+            'HAEMATOLOGY' => 'hematology',     // Alternative spelling
+            'DRUG URINE' => 'drug_urine',
+            'URINE ANALYSIS' => 'urine_analysis',
+            'URINALYSIS' => 'urine_analysis',  // Alternative format
+            'HEMOSTASIS' => 'hemostasis',
+            'HAEMOSTASIS' => 'hemostasis',     // Alternative spelling
+            
+            // Additional common sections
+            'SEROLOGY' => 'serology',
+            'IMMUNOLOGY' => 'immunology',
+            'MICROBIOLOGY' => 'microbiology',
+            'PARASITOLOGY' => 'parasitology',
+            'ENDOCRINOLOGY' => 'endocrinology',
+            'LIPID PROFILE' => 'lipid_profile',
+            'LIVER FUNCTION' => 'liver_function',
+            'KIDNEY FUNCTION' => 'kidney_function',
+            'THYROID FUNCTION' => 'thyroid_function',
+            'DIABETES PANEL' => 'diabetes_panel',
+            'TUMOR MARKERS' => 'tumor_markers',
+            'BLOOD GAS' => 'blood_gas',
+            'ELECTROLYTES' => 'electrolytes',
+            'PROTEINS' => 'proteins',
+            'VITAMINS' => 'vitamins',
+            'HORMONES' => 'hormones',
+            'COAGULATION' => 'coagulation',
+            'CSF ANALYSIS' => 'csf_analysis',
+            'SEMEN ANALYSIS' => 'semen_analysis',
+        ];
+    }
+
+    /**
+     * Dynamically detect section headers from the text
+     */
+    private function detectSectionHeaders(string $rawText): array
+    {
+        $detectedSections = [];
+        $lines = preg_split('/\r\n|\r|\n/', $rawText);
+        
+        for ($i = 0; $i < count($lines); $i++) {
+            $line = trim($lines[$i]);
+            $lineAbove = isset($lines[$i - 1]) ? trim($lines[$i - 1]) : '';
+            
+            // Check if this line looks like a section header
+            if ($this->looksLikeSectionHeader($line, $lineAbove)) {
+                $normalizedName = $this->normalizeSectionName($line);
+                $detectedSections[$line] = $normalizedName;
+            }
+        }
+        
+        return $detectedSections;
+    }
+
+    /**
+     * Check if a line looks like a section header
+     */
+    private function looksLikeSectionHeader(string $line, string $lineAbove): bool
+    {
+        // Skip empty lines
+        if (empty($line)) return false;
+        
+        // Must be mostly uppercase letters
+        if (!preg_match('/^[A-Z\s\/\-\(\)&_]+$/', $line)) return false;
+        
+        // Reasonable length (not too short, not too long)
+        if (strlen($line) < 4 || strlen($line) > 50) return false;
+        
+        // Should not contain numbers (test results have numbers)
+        if (preg_match('/\d/', $line)) return false;
+        
+        // Should not contain common result indicators
+        if (preg_match('/[\.]{2,}|:\s*\d|:\s*(NEGATIVE|POSITIVE)|mg\/dL|U\/L|g\/dL/i', $line)) return false;
+        
+        // Check positioning: follows "LABORATORY REPORT" OR has leading spaces (centered) OR is standalone
+        $followsReport = preg_match('/LABORATORY\s+REPORT/i', $lineAbove);
+        $isCentered = preg_match('/^\s{5,}/', $line);
+        $isStandalone = strlen(trim($line)) >= 8; // Reasonable section name length
+        
+        // Not a table header
+        if (preg_match('/\b(Results?|Unit|Reference|Range|Flag)\b/i', $line)) return false;
+        
+        // Known non-sections to exclude
+        $excludePatterns = [
+            '/^(HOSPITAL|LABORATORY|REPORT|ANALYSIS|TEST|RESULTS?)$/i',
+            '/^(Name|Age|Gender|Patient|Lab|Collected|Requested)$/i'
+        ];
+        
+        foreach ($excludePatterns as $pattern) {
+            if (preg_match($pattern, $line)) return false;
+        }
+        
+        return $followsReport || $isCentered || $isStandalone;
+    }
+
+    /**
+     * Normalize section name to consistent format
+     */
+    private function normalizeSectionName(string $sectionName): string
+    {
+        // Convert to lowercase and replace spaces/special chars with underscores
+        $normalized = strtolower(trim($sectionName));
+        $normalized = preg_replace('/[^a-z0-9]+/', '_', $normalized);
+        $normalized = trim($normalized, '_');
+        
+        // Handle common variations
+        $variations = [
+            'bio_chemistry' => 'biochemistry',
+            'bio_chimistry' => 'biochemistry',
+            'haematology' => 'hematology',
+            'haemostasis' => 'hemostasis',
+            'urine_analysis' => 'urine_analysis',
+            'urinalysis' => 'urine_analysis',
+        ];
+        
+        return $variations[$normalized] ?? $normalized;
     }
 
     /**
@@ -314,15 +451,31 @@ class ReportParserService
         return $patientInfo;
     }
 
+    /**
+     * Enhanced cleanValue with learned corrections
+     */
     private function cleanValue($value)
     {
-        if (empty($value))
-            return '';
+        if (empty($value)) return '';
 
+        // Apply basic cleaning first
+        $cleaned = $this->performBasicCleaning($value);
+        
+        // Apply learned corrections
+        $corrected = $this->applyLearnedCorrections($cleaned, 'test_name');
+        
+        return $corrected;
+    }
+
+    /**
+     * Perform basic OCR cleaning
+     */
+    private function performBasicCleaning($value): string
+    {
         // Remove non-printable characters and OCR noise
         $value = preg_replace('/[^\x20-\x7E\p{L}\p{N}\p{P}\p{S}]/u', '', $value);
 
-        // Remove common OCR noise patterns in one comprehensive regex
+        // Remove common OCR noise patterns
         $value = preg_replace('/\b(?:eee|we|wee|cece|Lecce|ece|ee|os|0{2,}\-?)\b/i', '', $value);
 
         // Fix common OCR mistakes in medical terms
@@ -332,7 +485,9 @@ class ReportParserService
             'Transferas' => 'Transferase',
             'Cholesterole' => 'Cholesterol',
             'Tryglyceride' => 'Triglyceride',
-            'Uric acide' => 'Uric acid', // Be specific
+            'Uric acide' => 'Uric acid',
+            'GLUC E L' => 'GLUCOSE', // Add common patterns you've noticed
+            'MCH 2.' => 'MCH',
         ];
         $value = str_replace(array_keys($medicalTermFixes), array_values($medicalTermFixes), $value);
 
@@ -342,7 +497,7 @@ class ReportParserService
         // Clean up multiple whitespace characters
         $value = preg_replace('/\s+/', ' ', $value);
 
-        // Remove trailing OCR artifacts from test names (numbers followed by dash)
+        // Remove trailing OCR artifacts
         $value = preg_replace('/\s+\d+\-?\s*$/', '', $value);
 
         // Remove leading/trailing non-alphanumeric characters except valid ones
@@ -351,6 +506,12 @@ class ReportParserService
         return trim($value);
     }
 
-
-
+    /**
+     * Apply learned corrections from database
+     */
+    private function applyLearnedCorrections(string $text, string $type): string
+    {
+        $correction = OcrCorrection::getBestCorrection($text, $type);
+        return $correction ?? $text;
+    }
 }

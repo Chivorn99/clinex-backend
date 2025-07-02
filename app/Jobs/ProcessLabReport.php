@@ -69,6 +69,7 @@ class ProcessLabReport implements ShouldQueue
                 Log::info("Patient created/updated for report ID: {$this->labReport->id}", ['patient_id' => $patient->patient_id, 'patient_db_id' => $patient->id]);
             }
 
+            // Save lab info to extracted_data
             $labData = [
                 'lab_id' => $patientInfo['lab_id'] ?? null,
                 'collected_date' => $patientInfo['collected_date'] ?? null,
@@ -82,7 +83,22 @@ class ProcessLabReport implements ShouldQueue
                 'field_name' => 'lab_data',
                 'value' => json_encode($labData, JSON_UNESCAPED_UNICODE),
             ]);
-            // 6. Save the test results data as JSON objects per section
+
+            // 🔥 ADD THIS: Save patient_info to extracted_data
+            if (!empty($structuredData['patient_info'])) {
+                ExtractedData::create([
+                    'lab_report_id' => $this->labReport->id,
+                    'section' => 'patient_info',
+                    'field_name' => 'patient_data',
+                    'value' => json_encode($structuredData['patient_info'], JSON_UNESCAPED_UNICODE),
+                ]);
+                
+                Log::info("Saved patient_info for report ID: {$this->labReport->id}", [
+                    'patient_info_fields' => array_keys($structuredData['patient_info'])
+                ]);
+            }
+
+            // Save the test results data as JSON objects per section
             if (!empty($structuredData['test_results'])) {
                 foreach ($structuredData['test_results'] as $sectionName => $results) {
                     if (!empty($results)) {
