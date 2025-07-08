@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -13,10 +12,15 @@ return new class extends Migration
     {
         Schema::create('templates', function (Blueprint $table) {
             $table->id();
-            $table->string('name'); // e.g., "Daily Blood Count V2"
+            $table->string('name'); // e.g., "Siemens ADVIA - Hematology"
             $table->text('description')->nullable();
-            $table->json('header_boundary')->nullable(); // Stores { y_coordinate: 0.25 }
-            $table->json('footer_boundary')->nullable(); // Stores { y_coordinate: 0.85 }
+
+            // 🔥 NEW: The Google AI Processor ID this template uses
+            $table->string('processor_id');
+
+            // 🔥 NEW: The JSON mapping rules
+            $table->json('mappings');
+
             $table->timestamps();
         });
     }

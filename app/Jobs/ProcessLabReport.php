@@ -3,16 +3,14 @@
 namespace App\Jobs;
 
 use App\Models\LabReport;
-use App\Models\Patient;
+use App\Models\Template;
+use App\Services\DocumentAiService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Process;
-use App\Services\ReportParserService;
-use App\Models\ExtractedData;
 
 class ProcessLabReport implements ShouldQueue
 {
@@ -24,105 +22,45 @@ class ProcessLabReport implements ShouldQueue
     public function __construct(
         public LabReport $labReport
     ) {
-        // This is how we pass the uploaded lab report into the job
     }
 
     /**
      * Execute the job.
      */
-    public function handle(): void
+    public function handle(DocumentAiService $documentAiService): void
     {
-        Log::info("Processing lab report ID: {$this->labReport->id}");
+        // --- 1. Load the Template from the Database ---
+        $template = Template::find($this->labReport->template_id);
+        if (!$template) {
+            $this->labReport->update(['status' => 'failed', 'processing_error' => "Template ID {$this->labReport->template_id} not found."]);
+            Log::error("Template ID {$this->labReport->template_id} not found for Lab Report {$this->labReport->id}.");
+            return;
+        }
+
+        Log::info("Processing lab report ID: {$this->labReport->id} with Template: '{$template->name}'");
         $this->labReport->update(['status' => 'processing']);
 
+        // --- 2. Get Processor ID from the Template ---
         $pdfPath = $this->labReport->getFullPath();
-        $pythonScriptPath = base_path('scripts/python/ocr_processor.py');
+        $processorId = $template->processor_id; // 👈 NEW: No longer hard-coded
 
-        $result = Process::run("python \"{$pythonScriptPath}\" \"{$pdfPath}\"");
+        $document = $documentAiService->processDocument($pdfPath, $processorId);
 
-        if ($result->successful()) {
-            $extractedText = $result->output();
-            $parser = new ReportParserService();
-            $structuredData = $parser->parse($extractedText);
+        if ($document !== null) {
+            Log::info("Successfully processed report ID: {$this->labReport->id}.");
 
-            // Debugging logs
-            Log::info("Raw OCR text for report ID: {$this->labReport->id}", ['ocr_text' => substr($extractedText, 0, 1000)]);
-            Log::info("Parsed structured data for report ID: {$this->labReport->id}", $structuredData);
+            // --- 3. (Future Step) Apply Mappings ---
+            // $parser = new DocumentAiParserService();
+            // $structuredData = $parser->parse($document, $template->mappings);
+            // $this->saveData($structuredData);
 
-            $patientInfo = $structuredData['patient_info'];
-            $patient = null;
-
-            if (!empty($patientInfo['patient_id'])) {
-                $patient = Patient::updateOrCreate(
-                    ['patient_id' => $patientInfo['patient_id']],
-                    [
-                        'name' => $patientInfo['name'] ?? null,
-                        'age' => $patientInfo['age'] ?? null,
-                        'gender' => $patientInfo['gender'] ?? null,
-                        'phone' => $patientInfo['phone'] ?? null,
-                    ]
-                );
-
-                // Link the lab report to the patient
-                $this->labReport->update(['patient_id' => $patient->id]);
-
-                Log::info("Patient created/updated for report ID: {$this->labReport->id}", ['patient_id' => $patient->patient_id, 'patient_db_id' => $patient->id]);
-            }
-
-            // Save lab info to extracted_data
-            $labData = [
-                'lab_id' => $patientInfo['lab_id'] ?? null,
-                'collected_date' => $patientInfo['collected_date'] ?? null,
-                'analysis_date' => $patientInfo['analysis_date'] ?? null,
-                'requested_by' => $patientInfo['requested_by'] ?? null,
-            ];
-
-            ExtractedData::create([
-                'lab_report_id' => $this->labReport->id,
-                'section' => 'lab_info',
-                'field_name' => 'lab_data',
-                'value' => json_encode($labData, JSON_UNESCAPED_UNICODE),
-            ]);
-
-            // 🔥 ADD THIS: Save patient_info to extracted_data
-            if (!empty($structuredData['patient_info'])) {
-                ExtractedData::create([
-                    'lab_report_id' => $this->labReport->id,
-                    'section' => 'patient_info',
-                    'field_name' => 'patient_data',
-                    'value' => json_encode($structuredData['patient_info'], JSON_UNESCAPED_UNICODE),
-                ]);
-                
-                Log::info("Saved patient_info for report ID: {$this->labReport->id}", [
-                    'patient_info_fields' => array_keys($structuredData['patient_info'])
-                ]);
-            }
-
-            // Save the test results data as JSON objects per section
-            if (!empty($structuredData['test_results'])) {
-                foreach ($structuredData['test_results'] as $sectionName => $results) {
-                    if (!empty($results)) {
-                        ExtractedData::create([
-                            'lab_report_id' => $this->labReport->id,
-                            'section' => $sectionName, // e.g., 'biochemistry', 'hematology'
-                            'field_name' => 'test_results',
-                            'value' => json_encode($results, JSON_UNESCAPED_UNICODE),
-                        ]);
-
-                        Log::info("Saved {$sectionName} test results for report ID: {$this->labReport->id}", ['test_count' => count($results)]);
-                    }
-                }
-            }
-
+            Log::info("Extracted Text: " . substr($document->getText(), 0, 1500) . "...");
             $this->labReport->update(['status' => 'processed']);
+
         } else {
-            $errorOutput = $result->errorOutput();
-            Log::error("Failed to process report ID: {$this->labReport->id}", [
-                'error' => $errorOutput
-            ]);
             $this->labReport->update([
                 'status' => 'failed',
-                'processing_error' => $errorOutput
+                'processing_error' => 'Failed to process with Google Document AI. See logs for details.'
             ]);
         }
 
