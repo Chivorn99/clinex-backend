@@ -15,6 +15,14 @@
                     <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
                         {{ __('Dashboard') }}
                     </x-nav-link>
+                    <x-nav-link :href="route('lab-reports.upload')" :active="request()->routeIs('lab-reports.upload')">
+                        {{ __('Upload Reports') }}
+                    </x-nav-link>
+                    @can('admin')
+                        <x-nav-link :href="route('templates.index')" :active="request()->routeIs('templates.*')">
+                            {{ __('Templates') }}
+                        </x-nav-link>
+                    @endcan
                 </div>
             </div>
 

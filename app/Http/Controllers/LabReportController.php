@@ -34,11 +34,13 @@ class LabReportController extends Controller
     {
         $request->validate([
             'files' => 'required|array|min:1|max:10',
-            'files.*' => 'required|file|mimes:pdf|max:10240'
+            'files.*' => 'required|file|mimes:pdf|max:10240',
+            'template_id' => 'required|exists:templates,id'
         ]);
 
         try {
             $uploadedFiles = [];
+            $template = \App\Models\Template::findOrFail($request->template_id);
 
             foreach ($request->file('files') as $file) {
                 $filename = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
@@ -47,6 +49,7 @@ class LabReportController extends Controller
                 $labReport = LabReport::create([
                     'original_filename' => $file->getClientOriginalName(),
                     'storage_path' => $path,
+                    'template_id' => $template->id,
                     'status' => 'pending'
                 ]);
 
@@ -55,13 +58,14 @@ class LabReportController extends Controller
                 $uploadedFiles[] = [
                     'id' => $labReport->id,
                     'filename' => $labReport->original_filename,
-                    'status' => $labReport->status
+                    'status' => $labReport->status,
+                    'template' => $template->name
                 ];
             }
 
             return response()->json([
                 'success' => true,
-                'message' => count($uploadedFiles) . ' PDF files uploaded successfully',
+                'message' => count($uploadedFiles) . ' PDF files uploaded successfully with template: ' . $template->name,
                 'data' => $uploadedFiles
             ], 201);
 
@@ -70,7 +74,7 @@ class LabReportController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Upload failed'
+                'message' => 'Upload failed: ' . $e->getMessage()
             ], 500);
         }
     }

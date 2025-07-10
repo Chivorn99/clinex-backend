@@ -18,9 +18,12 @@ class Template extends Model
      */
     protected $fillable = [
         'name',
-        'description',
-        'processor_id',  // Add this - Google AI Processor ID
-        'mappings',     
+        'processor_id',
+        'structure_data',
+        'field_mappings',
+        'mappings', 
+        'status',
+        'created_by',
     ];
 
     /**
@@ -29,16 +32,10 @@ class Template extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'mappings' => 'array', // Cast JSON to array automatically
+        'structure_data' => 'array',
+        'field_mappings' => 'array',
+        'mappings' => 'array',
     ];
-
-    /**
-     * Get all of the fields for the Template.
-     */
-    public function fields(): HasMany
-    {
-        return $this->hasMany(TemplateField::class);
-    }
 
     /**
      * Get all lab reports that use this template
@@ -56,30 +53,9 @@ class Template extends Model
         return $query->where('processor_id', $processorId);
     }
 
-    /**
-     * Get mapping for a specific field
-     */
-    public function getMappingFor($fieldName)
-    {
-        return $this->mappings[$fieldName] ?? null;
-    }
 
-    /**
-     * Set mapping for a specific field
-     */
-    public function setMappingFor($fieldName, $mapping)
+    public function creator()
     {
-        $mappings = $this->mappings ?? [];
-        $mappings[$fieldName] = $mapping;
-        $this->mappings = $mappings;
-        return $this;
-    }
-
-    /**
-     * Get all available field mappings
-     */
-    public function getAvailableFields()
-    {
-        return array_keys($this->mappings ?? []);
+        return $this->belongsTo(User::class, 'created_by');
     }
 }

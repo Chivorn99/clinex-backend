@@ -120,7 +120,7 @@
                     </div>
 
                     <!-- Raw Text Panel (Hidden by default) -->
-                    <div id="raw-text-panel" class="hidden w-1/2 border-l border-gray-200 flex flex-col h-full">
+                    <div id="raw-text-panel" class="w-1/2 border-l border-gray-200 flex-col h-full" style="display: none;">
                         <div class="bg-gradient-to-r from-purple-600 to-purple-700 px-4 py-3 text-white flex items-center justify-between">
                             <h3 class="font-medium flex items-center">
                                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">

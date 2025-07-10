@@ -5,6 +5,7 @@ namespace App\Services;
 use Google\Cloud\DocumentAI\V1\Client\DocumentProcessorServiceClient;
 use Google\Cloud\DocumentAI\V1\ProcessRequest;
 use Google\Cloud\DocumentAI\V1\RawDocument;
+use Illuminate\Support\Facades\Log;
 
 class DocumentAiService
 {
@@ -45,7 +46,7 @@ class DocumentAiService
             $documentContent = file_get_contents($filePath);
             if ($documentContent === false) {
                 // Log an error if the file cannot be read
-                \Log::error("Failed to read file content from path: {$filePath}");
+                Log::error("Failed to read file content from path: {$filePath}");
                 return null;
             }
 
@@ -68,7 +69,7 @@ class DocumentAiService
 
         } catch (\Exception $e) {
             // Log any errors that occur during the API call
-            \Log::error('Google Document AI processing failed: ' . $e->getMessage());
+            Log::error('Google Document AI processing failed: ' . $e->getMessage());
             return null;
         }
     }

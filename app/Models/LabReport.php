@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LabReport extends Model
 {
@@ -23,6 +24,7 @@ class LabReport extends Model
         'mime_type',
         'patient_name',
         'patient_id', 
+        'template_id',
         'report_date',
         'notes',
         'status',
@@ -47,6 +49,14 @@ class LabReport extends Model
     public function extractedData(): HasMany
     {
         return $this->hasMany(ExtractedData::class);
+    }
+
+    /**
+     * Get the template that this lab report uses.
+     */
+    public function template(): BelongsTo
+    {
+        return $this->belongsTo(Template::class);
     }
 
     /**
