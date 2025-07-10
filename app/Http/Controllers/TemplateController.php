@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Template;
 use App\Services\TemplateAnalyzerService;
 use App\Services\DocumentAiService;
+use App\Services\TemplateZonesService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use App\Jobs\CreateTemplateFromPdf;
@@ -12,15 +13,18 @@ use Illuminate\Support\Facades\Log;
 use App\Events\PdfProcessingProgress;
 use Illuminate\Support\Str;
 use App\Jobs\ProcessPdfForExtraction;
+use Illuminate\Validation\ValidationException;
 
 
 class TemplateController extends Controller
 {
     protected $templateAnalyzer;
+    protected $templateZonesService;
 
-    public function __construct(TemplateAnalyzerService $templateAnalyzer)
+    public function __construct(TemplateAnalyzerService $templateAnalyzer, TemplateZonesService $templateZonesService)
     {
         $this->templateAnalyzer = $templateAnalyzer;
+        $this->templateZonesService = $templateZonesService;
     }
 
     /**
@@ -33,15 +37,14 @@ class TemplateController extends Controller
     }
 
     /**
-     * Show the form for creating a new resource.
+     * Show the empty form for creating a new template.
      */
     public function create()
     {
-        // Check if we have temporary extracted data from session
-        $aiData = session('extracted_pdf_data', null);
-
+        // This now only returns the view with no data.
+        // The data will be loaded dynamically via JavaScript.
         return view('templates.create', [
-            'aiData' => $aiData,
+            'aiData' => null,
             'clinexFields' => [
                 'patient_info' => ['patient_id', 'name', 'age', 'gender', 'lab_id', 'phone'],
                 'table_columns' => ['test_name', 'value', 'unit', 'reference_range', 'flag'],
@@ -49,6 +52,67 @@ class TemplateController extends Controller
         ]);
     }
 
+    /**
+     * Analyze a PDF file on-the-fly and return extracted data as JSON.
+     * This is our new API endpoint.
+     */
+    public function analyzePdf(Request $request, DocumentAiService $documentAiService, TemplateAnalyzerService $analyzerService)
+    {
+        $request->validate([
+            'pdf_file' => 'required|file|mimes:pdf|max:10240', // 10MB Max
+            'processor_id' => 'required|string',
+        ]);
+
+        try {
+            $file = $request->file('pdf_file');
+            $processorId = $request->input('processor_id');
+
+            $document = $documentAiService->processDocument($file->getPathname(), $processorId);
+
+            if (!$document) {
+                throw new \Exception('The document could not be processed by Google AI.');
+            }
+
+            // Use our dedicated service to parse the complex response into a simple array
+            $parsedData = $analyzerService->parse($document);
+
+            // Also get the PDF to display it in the preview pane
+            $pdfBase64 = base64_encode(file_get_contents($file->getPathname()));
+
+            return response()->json([
+                'success' => true,
+                'data' => $parsedData,
+                'pdf_preview_src' => 'data:application/pdf;base64,' . $pdfBase64,
+            ]);
+
+        } catch (ValidationException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage(), 'errors' => $e->errors()], 422);
+        } catch (\Exception $e) {
+            Log::error('Template analysis failed: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'An error occurred during analysis.'], 500);
+        }
+    }
+
+    /**
+     * Store the final template configuration in the database.
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'processor_id' => 'required|string',
+            'mappings' => 'required|array'
+        ]);
+
+        $template = Template::create($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Template saved successfully!',
+            'redirect_url' => route('dashboard') // Or wherever you want to go after saving
+        ]);
+    }
     /**
      * Process uploaded PDF and extract structure for template creation
      */
@@ -120,32 +184,35 @@ class TemplateController extends Controller
         try {
             $pdfFile = $request->file('pdf');
             $fileName = uniqid() . '.pdf';
-            
-            // Store temporarily
             $tempDir = storage_path('app/temp_pdfs');
-            if (!is_dir($tempDir)) {
-                mkdir($tempDir, 0755, true);
-            }
+            // Create directory if needed
+            if (!is_dir($tempDir)) mkdir($tempDir, 0755, true);
             
             $fullPath = $tempDir . DIRECTORY_SEPARATOR . $fileName;
-            
             if (!$pdfFile->move($tempDir, $fileName)) {
                 throw new \Exception("Failed to save uploaded file");
             }
             
             Log::info("PDF uploaded for extraction: " . $fullPath);
 
-            // Process directly without job (for testing)
-            $aiService = new \App\Services\DocumentAiService();
-            $document = $aiService->processDocument($fullPath, 'a2439f686e4b0f79');
-
-            if (!$document) {
+            // Use the enhanced processing method
+            $aiService = new DocumentAiService();
+            
+            // Use Document OCR processor instead of enhanced processing
+            $extractedData = $aiService->processDocumentEnhanced(
+                $fullPath,
+                'ocr',  // This will use your OCR processor
+                'application/pdf',
+                true,   // Still enhance PDF before processing
+                true    // Use advanced features
+            );
+            
+            // Since OCR may return less structured data, add post-processing
+            $extractedData = $this->postProcessOcrData($extractedData);
+            
+            if (!$extractedData) {
                 throw new \Exception("Failed to process document with Document AI");
             }
-
-            // Transform data (simplified)
-            $extractedData = $this->transformDocumentToStructureData($document);
-            $transformedData = $this->transformStructureDataForTemplate($extractedData);
 
             // Clean up
             if (file_exists($fullPath)) {
@@ -153,17 +220,10 @@ class TemplateController extends Controller
                 Log::info("Cleaned up temporary file: " . $fullPath);
             }
 
-            // Store the extracted data in a log file for analysis
-            $jsonData = json_encode($transformedData, JSON_PRETTY_PRINT);
-            $this->logExtractedData($jsonData, $fileName);
-
-            // Also store in session for later access if needed
-            session(['extracted_pdf_data' => $transformedData]);
-
             return response()->json([
                 'success' => true,
                 'message' => 'PDF data extracted successfully',
-                'data' => $transformedData
+                'data' => $extractedData
             ]);
 
         } catch (\Exception $e) {
@@ -187,11 +247,11 @@ class TemplateController extends Controller
             if (!is_dir($logDir)) {
                 mkdir($logDir, 0755, true);
             }
-            
+
             // Create a log file with date and original filename
             $logFile = $logDir . '/' . date('Y-m-d_H-i-s') . '_' . pathinfo($fileName, PATHINFO_FILENAME) . '.json';
             file_put_contents($logFile, $jsonData);
-            
+
             Log::info("Extracted data logged to: " . $logFile);
         } catch (\Exception $e) {
             Log::warning("Failed to log extracted data: " . $e->getMessage());
@@ -248,7 +308,7 @@ class TemplateController extends Controller
         try {
             // Get the full text from the document with UTF-8 handling
             $fullText = $this->sanitizeText($document->getText());
-            
+
             // Process entities from Document AI (if available)
             $entities = $document->getEntities();
             foreach ($entities as $entity) {
@@ -256,8 +316,8 @@ class TemplateController extends Controller
                     'type' => $this->sanitizeText($entity->getType()),
                     'mention_text' => $this->sanitizeText($entity->getMentionText()),
                     'confidence' => $entity->getConfidence(),
-                    'normalized_value' => $entity->getNormalizedValue() ? 
-                        $this->sanitizeText($entity->getNormalizedValue()->getText()) : 
+                    'normalized_value' => $entity->getNormalizedValue() ?
+                        $this->sanitizeText($entity->getNormalizedValue()->getText()) :
                         $this->sanitizeText($entity->getMentionText())
                 ];
             }
@@ -307,7 +367,7 @@ class TemplateController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error transforming Document AI response: ' . $e->getMessage());
-            
+
             // Return empty structure if processing fails
             return [
                 'entities' => [],
@@ -338,7 +398,7 @@ class TemplateController extends Controller
             foreach ($textSegments as $segment) {
                 $startIndex = $segment->getStartIndex();
                 $endIndex = $segment->getEndIndex();
-                
+
                 if ($startIndex !== null && $endIndex !== null) {
                     $extractedText = substr($fullText, $startIndex, $endIndex - $startIndex);
                     $text .= $extractedText;
@@ -377,88 +437,88 @@ class TemplateController extends Controller
         // Remove or replace problematic characters
         $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $text); // Remove control characters
         $text = preg_replace('/[^\P{C}\t\r\n]/u', '', $text); // Remove other control characters but keep tabs and newlines
-        
+
         // Clean up extra whitespace
         $text = preg_replace('/\s+/', ' ', $text);
-        
+
         return trim($text);
     }
 
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'processor_id' => 'string|max:255',
-            'lab_type' => 'string',
-            'header_fields' => 'array',
-            'test_sections' => 'array', // Changed from table_mappings
-            'footer_fields' => 'nullable|array',
-            'custom_categories' => 'nullable|array'
-        ]);
+    // public function store(Request $request)
+    // {
+    //     $request->validate([
+    //         'name' => 'required|string|max:255',
+    //         'description' => 'nullable|string',
+    //         'processor_id' => 'string|max:255',
+    //         'lab_type' => 'string',
+    //         'header_fields' => 'array',
+    //         'test_sections' => 'array', // Changed from table_mappings
+    //         'footer_fields' => 'nullable|array',
+    //         'custom_categories' => 'nullable|array'
+    //     ]);
 
-        // Create the mappings structure for the template
-        $mappings = [
-            'header' => [],
-            'test_sections' => [], // Changed from tables
-            'footer' => [],
-            'custom_categories' => $request->custom_categories ?? []
-        ];
+    //     // Create the mappings structure for the template
+    //     $mappings = [
+    //         'header' => [],
+    //         'test_sections' => [], // Changed from tables
+    //         'footer' => [],
+    //         'custom_categories' => $request->custom_categories ?? []
+    //     ];
 
-        // Process header fields
-        if ($request->header_fields) {
-            foreach ($request->header_fields as $field) {
-                $mappings['header'][$field['field_name']] = [
-                    'extracted_value' => $field['extracted_value'] ?? '',
-                    'mapped_field' => $field['mapped_field']
-                ];
-            }
-        }
+    //     // Process header fields
+    //     if ($request->header_fields) {
+    //         foreach ($request->header_fields as $field) {
+    //             $mappings['header'][$field['field_name']] = [
+    //                 'extracted_value' => $field['extracted_value'] ?? '',
+    //                 'mapped_field' => $field['mapped_field']
+    //             ];
+    //         }
+    //     }
 
-        // Process test sections
-        if ($request->test_sections) {
-            foreach ($request->test_sections as $section) {
-                $mappings['test_sections'][] = [
-                    'section_name' => $section['section_name'],
-                    'category' => $section['category'],
-                    'expected_tests' => $section['test_results'] ?? [] // Store as expected test structure
-                ];
-            }
-        }
+    //     // Process test sections
+    //     if ($request->test_sections) {
+    //         foreach ($request->test_sections as $section) {
+    //             $mappings['test_sections'][] = [
+    //                 'section_name' => $section['section_name'],
+    //                 'category' => $section['category'],
+    //                 'expected_tests' => $section['test_results'] ?? [] // Store as expected test structure
+    //             ];
+    //         }
+    //     }
 
-        // Process footer fields
-        if ($request->footer_fields) {
-            foreach ($request->footer_fields as $field) {
-                $mappings['footer'][$field['field_name']] = [
-                    'extracted_value' => $field['extracted_value'] ?? '',
-                    'mapped_field' => $field['mapped_field']
-                ];
-            }
-        }
+    //     // Process footer fields
+    //     if ($request->footer_fields) {
+    //         foreach ($request->footer_fields as $field) {
+    //             $mappings['footer'][$field['field_name']] = [
+    //                 'extracted_value' => $field['extracted_value'] ?? '',
+    //                 'mapped_field' => $field['mapped_field']
+    //             ];
+    //         }
+    //     }
 
-        // Store custom categories globally
-        if (!empty($request->custom_categories)) {
-            $this->storeCustomCategories($request->custom_categories);
-        }
+    //     // Store custom categories globally
+    //     if (!empty($request->custom_categories)) {
+    //         $this->storeCustomCategories($request->custom_categories);
+    //     }
 
-        $template = Template::create([
-            'name' => $request->name,
-            'description' => $request->description,
-            'processor_id' => $request->processor_id ?? 'default',
-            'lab_type' => $request->lab_type ?? 'mixed',
-            'mappings' => $mappings,
-            'is_active' => true
-        ]);
+    //     $template = Template::create([
+    //         'name' => $request->name,
+    //         'description' => $request->description,
+    //         'processor_id' => $request->processor_id ?? 'default',
+    //         'lab_type' => $request->lab_type ?? 'mixed',
+    //         'mappings' => $mappings,
+    //         'is_active' => true
+    //     ]);
 
-        return response()->json([
-            'success' => true,
-            'template' => $template,
-            'message' => 'Template created successfully'
-        ]);
-    }
+    //     return response()->json([
+    //         'success' => true,
+    //         'template' => $template,
+    //         'message' => 'Template created successfully'
+    //     ]);
+    // }
 
     public function getCustomCategories()
     {
@@ -563,5 +623,373 @@ class TemplateController extends Controller
             'success' => true,
             'templates' => $templates
         ]);
+    }
+
+    /**
+     * Post-process OCR data to extract structured information
+     */
+    private function postProcessOcrData($ocrData)
+    {
+        // Keep original OCR data
+        $processedData = $ocrData;
+        
+        // Ensure we have text to process
+        $fullText = $ocrData['text'] ?? '';
+        if (empty($fullText)) {
+            return $ocrData;
+        }
+        
+        // Extract patient information
+        $patientInfo = [];
+        
+        // Common patterns for patient info
+        $patterns = [
+            'patient_name' => '/(?:Patient|Name)\s*[:;]\s*([A-Za-z\s\.\-]+)(?:\n|,|$)/i',
+            'patient_id' => '/(?:ID|Patient ID|MRN)\s*[:;]\s*([A-Z0-9\-]+)/i',
+            'dob' => '/(?:DOB|Date of Birth|Born)\s*[:;]\s*([0-9\/\.\-]+)/i',
+            'gender' => '/(?:Gender|Sex)\s*[:;]\s*(Male|Female|M|F)/i',
+            'age' => '/(?:Age)\s*[:;]\s*(\d+)/i',
+        ];
+        
+        foreach ($patterns as $field => $pattern) {
+            if (preg_match($pattern, $fullText, $matches)) {
+                $patientInfo[$field] = trim($matches[1]);
+            }
+        }
+        
+        // Add extracted patient info to the processed data
+        if (!empty($patientInfo)) {
+            $processedData['entities'] = $processedData['entities'] ?? [];
+            foreach ($patientInfo as $field => $value) {
+                $processedData['entities'][] = [
+                    'type' => $field,
+                    'text' => $value,
+                    'confidence' => 0.9 // Estimated confidence from regex matching
+                ];
+            }
+        }
+        
+        // Extract tables using line breaks and consistent spacing
+        // This is more complex - here's a simplified approach
+        $tables = $this->extractTablesFromOcrText($fullText);
+        if (!empty($tables)) {
+            $processedData['tables'] = array_merge($processedData['tables'] ?? [], $tables);
+        }
+        
+        return $processedData;
+    }
+
+    /**
+     * Extract tables from OCR text based on patterns
+     */
+    private function extractTablesFromOcrText($text)
+    {
+        $tables = [];
+        
+        // Look for table indicators
+        $tablePatterns = [
+            'lab_results' => '/(?:Test Results|Laboratory Results|TEST NAME|RESULT|REFERENCE)/i',
+            'vitals' => '/(?:Vital Signs|VITALS|HEIGHT|WEIGHT|BMI|BLOOD PRESSURE)/i'
+        ];
+        
+        foreach ($tablePatterns as $tableType => $pattern) {
+            if (preg_match($pattern, $text)) {
+                // Try to find table rows based on common patterns
+                // This is simplified - real implementation would be more robust
+                preg_match_all('/([A-Za-z\s\-\(\)]+)\s*[:]\s*([\d\.]+)\s*([a-zA-Z\/]+)?\s*(?:\(([^)]+)\))?/m', $text, $matches, PREG_SET_ORDER);
+                
+                $rows = [];
+                foreach ($matches as $match) {
+                    $row = [];
+                    $row[] = trim($match[1]); // Test name
+                    $row[] = trim($match[2]); // Value
+                    $row[] = isset($match[3]) ? trim($match[3]) : ''; // Unit
+                    $row[] = isset($match[4]) ? trim($match[4]) : ''; // Reference range
+                    
+                    $rows[] = $row;
+                }
+                
+                if (!empty($rows)) {
+                    $tables[] = [
+                        'name' => ucfirst($tableType),
+                        'headers' => ['Test', 'Result', 'Unit', 'Reference Range', 'Flag'],
+                        'rows' => $rows
+                    ];
+                }
+            }
+        }
+        
+        return $tables;
+    }
+
+    /**
+     * Process a PDF using a template's zones
+     */
+    public function processWithTemplate(Request $request)
+    {
+        $request->validate([
+            'pdf' => 'required|file|mimes:pdf|max:10240',
+            'template_id' => 'required|exists:templates,id',
+        ]);
+        
+        $template = Template::findOrFail($request->template_id);
+        $pdfFile = $request->file('pdf');
+        $filePath = $pdfFile->getRealPath();
+        
+        $extractedData = $this->templateZonesService->processWithTemplate($filePath, $template);
+        
+        if (!$extractedData) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to extract data using template'
+            ], 500);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $extractedData
+        ]);
+    }
+
+    /**
+     * Extract data from specific zones in a PDF
+     */
+    public function extractFromZones(Request $request)
+    {
+        try {
+            $request->validate([
+                'pdf' => 'required|file|mimes:pdf|max:10240',
+                'zones' => 'required|json',
+            ]);
+            
+            $pdfFile = $request->file('pdf');
+            $zones = json_decode($request->input('zones'), true);
+            
+            $fileName = uniqid() . '.pdf';
+            $tempDir = storage_path('app/temp_pdfs');
+            
+            // Create directory if needed
+            if (!is_dir($tempDir)) mkdir($tempDir, 0755, true);
+            
+            $fullPath = $tempDir . DIRECTORY_SEPARATOR . $fileName;
+            if (!$pdfFile->move($tempDir, $fileName)) {
+                throw new \Exception("Failed to save uploaded file");
+            }
+            
+            Log::info("PDF uploaded for zonal extraction: {$fullPath}");
+            
+            // Use Document AI Service for basic OCR
+            $aiService = new DocumentAiService();
+            $fullExtraction = $aiService->processDocumentEnhanced(
+                $fullPath,
+                'ocr',
+                'application/pdf',
+                true,
+                false // Skip advanced features to avoid API issues
+            );
+            
+            if (!$fullExtraction) {
+                throw new \Exception("Document AI extraction returned no results");
+            }
+            
+            // Process zones to extract targeted data
+            $zonalExtraction = $this->processZonalExtraction($fullExtraction, $zones);
+            
+            // Clean up
+            if (file_exists($fullPath)) {
+                @unlink($fullPath);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $zonalExtraction
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Zonal extraction failed: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Error processing zones: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Process extracted text to get only content from specified zones
+     */
+    private function processZonalExtraction($fullExtraction, $zones)
+    {
+        $result = [
+            'entities' => [],
+            'tables' => []
+        ];
+        
+        // Extract text blocks from the full extraction
+        $textBlocks = [];
+        if (isset($fullExtraction['pages'])) {
+            foreach ($fullExtraction['pages'] as $page) {
+                if (isset($page['blocks'])) {
+                    foreach ($page['blocks'] as $block) {
+                        if (isset($block['layout']['boundingPoly']['vertices'])) {
+                            $vertices = $block['layout']['boundingPoly']['vertices'];
+                            $text = $this->getTextFromBlock($block, $fullExtraction);
+                            
+                            if ($text) {
+                                $textBlocks[] = [
+                                    'text' => $text,
+                                    'x' => $vertices[0]['x'] ?? 0,
+                                    'y' => $vertices[0]['y'] ?? 0,
+                                    'width' => ($vertices[1]['x'] ?? 0) - ($vertices[0]['x'] ?? 0),
+                                    'height' => ($vertices[3]['y'] ?? 0) - ($vertices[0]['y'] ?? 0)
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process each zone
+        foreach ($zones as $zone) {
+            if ($zone['type'] === 'field') {
+                // Find text blocks that intersect with this zone
+                $zoneText = $this->getTextInZone($textBlocks, $zone);
+                if ($zoneText) {
+                    $result['entities'][$zone['field_name']] = $zoneText;
+                }
+            } 
+            else if ($zone['type'] === 'table') {
+                // For tables, try to find structured rows
+                $tableRows = $this->extractTableFromZone($textBlocks, $zone);
+                if (!empty($tableRows)) {
+                    $result['tables'][] = [
+                        'name' => $zone['field_name'],
+                        'rows' => $tableRows
+                    ];
+                }
+            }
+        }
+        
+        return $result;
+    }
+
+    /**
+     * Get text from blocks that fall within a specific zone
+     */
+    private function getTextInZone($textBlocks, $zone)
+    {
+        $zoneText = '';
+        
+        foreach ($textBlocks as $block) {
+            // Check if block intersects with zone
+            if ($this->blocksIntersect($block, $zone)) {
+                $zoneText .= $block['text'] . ' ';
+            }
+        }
+        
+        return trim($zoneText);
+    }
+
+    /**
+     * Extract table data from blocks in a zone
+     */
+    private function extractTableFromZone($textBlocks, $zone)
+    {
+        $zoneBlocks = [];
+        
+        // Get blocks in this zone
+        foreach ($textBlocks as $block) {
+            if ($this->blocksIntersect($block, $zone)) {
+                $zoneBlocks[] = $block;
+            }
+        }
+        
+        // Sort blocks by Y position first (rows)
+        usort($zoneBlocks, function($a, $b) {
+            $rowDiff = $a['y'] - $b['y'];
+            if (abs($rowDiff) <= 10) { // Blocks on same row (within 10px)
+                return $a['x'] - $b['x']; // Sort by X position
+            }
+            return $rowDiff;
+        });
+        
+        // Group blocks into rows
+        $rows = [];
+        $currentRow = [];
+        $lastY = -100;
+        
+        foreach ($zoneBlocks as $block) {
+            // If this block is on a new row (>10px difference)
+            if (abs($block['y'] - $lastY) > 10) {
+                if (!empty($currentRow)) {
+                    $rows[] = $currentRow;
+                    $currentRow = [];
+                }
+                $lastY = $block['y'];
+            }
+            
+            $currentRow[] = $block;
+        }
+        
+        // Add the last row
+        if (!empty($currentRow)) {
+            $rows[] = $currentRow;
+        }
+        
+        // Convert rows to table data
+        $tableData = [];
+        foreach ($rows as $row) {
+            $tableRow = [];
+            
+            foreach ($row as $block) {
+                $tableRow[] = $block['text'];
+            }
+            
+            $tableData[] = $tableRow;
+        }
+        
+        return $tableData;
+    }
+
+    /**
+     * Check if two blocks intersect
+     */
+    private function blocksIntersect($block, $zone)
+    {
+        // Check if block is completely outside zone
+        if ($block['x'] >= $zone['x'] + $zone['width'] ||
+            $block['x'] + $block['width'] <= $zone['x'] ||
+            $block['y'] >= $zone['y'] + $zone['height'] ||
+            $block['y'] + $block['height'] <= $zone['y']) {
+            return false;
+        }
+        
+        // Block intersects with zone
+        return true;
+    }
+
+    /**
+     * Helper to get text from a block
+     */
+    private function getTextFromBlock($block, $fullExtraction)
+    {
+        if (!isset($block['layout']['textAnchor']['textSegments'])) {
+            return '';
+        }
+        
+        $text = '';
+        $textSegments = $block['layout']['textAnchor']['textSegments'];
+        
+        foreach ($textSegments as $segment) {
+            $startIndex = $segment['startIndex'] ?? 0;
+            $endIndex = $segment['endIndex'] ?? 0;
+            
+            if (isset($fullExtraction['text']) && $startIndex < strlen($fullExtraction['text'])) {
+                $text .= substr($fullExtraction['text'], $startIndex, $endIndex - $startIndex);
+            }
+        }
+        
+        return $text;
     }
 }

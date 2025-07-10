@@ -30,7 +30,7 @@ Route::middleware('auth')->group(function () {
         ->name('lab-reports.save-corrections');
     Route::get('/lab-reports/{labReport}/pdf', [LabReportCorrectionController::class, 'showPdf'])
         ->name('lab-reports.pdf');
-    
+
     // Template management routes (admin only)
     Route::middleware('can:admin')->group(function () {
         Route::get('/templates', [TemplateController::class, 'index'])->name('templates.index');
@@ -40,11 +40,19 @@ Route::middleware('auth')->group(function () {
         Route::get('/templates/{template}/edit', [TemplateController::class, 'edit'])->name('templates.edit');
         Route::patch('/templates/{template}', [TemplateController::class, 'update'])->name('templates.update');
         Route::delete('/templates/{template}', [TemplateController::class, 'destroy'])->name('templates.destroy');
-        
+
         // Template creation from PDF
         Route::post('/templates/create-from-pdf', [TemplateController::class, 'processPdfForTemplate'])->name('templates.create-from-pdf');
         Route::get('/templates/custom-categories', [TemplateController::class, 'getCustomCategories'])->name('templates.custom-categories');
         Route::post('/templates/extract-pdf', [TemplateController::class, 'extractFromPdf'])->name('templates.extract-pdf');
+
+        // Newer Version
+        Route::post('/templates/analyze', [TemplateController::class, 'analyze'])->name('templates.analyze');
+
+        // Zonal extraction route
+        Route::post('/templates/extract-zones', [TemplateController::class, 'extractFromZones'])
+            ->middleware(['auth', 'verified'])
+            ->name('templates.extract-zones');
     });
 });
 
