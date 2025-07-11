@@ -123,4 +123,8 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'ghostscript' => [
+        'binary' => env('GHOSTSCRIPT_PATH'),
+    ],
+
 ];

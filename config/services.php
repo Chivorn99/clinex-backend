@@ -38,6 +38,9 @@ return [
         'project_id' => env('GOOGLE_CLOUD_PROJECT_ID', 'clinex-application'),
         'credentials' => storage_path(env('GOOGLE_APPLICATION_CREDENTIALS')),
         'processor_id' => env('GOOGLE_CLOUD_DOCUMENT_AI_PROCESSOR_ID'),
+        'ocr_processor_id' => env('GOOGLE_CLOUD_DOCUMENT_OCR_PROCESSOR_ID'),
+        'keyFilePath'   => env('GOOGLE_APPLICATION_CREDENTIALS'),
+        'location'      => env('DOCUMENT_AI_LOCATION', 'us'),
     ],
 
 ];

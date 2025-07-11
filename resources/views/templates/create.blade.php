@@ -137,14 +137,14 @@
                                                         <option value="">Select field...</option>
                                                         @foreach($clinexFields['patient_info'] as $field)
                                                                                             <option value="{{ $field }}" {{ 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        (str_contains(strtolower($key), 'name') && $field === 'name') ||
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            (str_contains(strtolower($key), 'name') && $field === 'name') ||
                                                             (str_contains(strtolower($key), 'patient id') && $field === 'patient_id') ||
                                                             (str_contains(strtolower($key), 'age') && $field === 'age') ||
                                                             (str_contains(strtolower($key), 'gender') && $field === 'gender') ||
                                                             (str_contains(strtolower($key), 'lab id') && $field === 'lab_id') ||
                                                             (str_contains(strtolower($key), 'phone') && $field === 'phone')
                                                             ? 'selected' : '' 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    }}>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        }}>
                                                                                                 {{ ucfirst(str_replace('_', ' ', $field)) }}
                                                                                             </option>
                                                         @endforeach
@@ -943,7 +943,7 @@
             // Use ID instead of :contains selector
             const extractButton = document.getElementById('extract-zones-btn');
             const originalText = extractButton.innerHTML;
-            extractButton.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Extracting...';
+            extractButton.innerHTML = '<svg class="animate-spin h-5 w-5 text-white inline-block mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Extracting...</span>';
             extractButton.disabled = true;
 
             // Create form data with the PDF and the zones
@@ -963,6 +963,9 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
+                        // Show raw JSON output in a collapsible section
+                        showRawJsonOutput(data.data);
+
                         // Populate form with extracted data
                         populateFormWithExtractedData(data.data);
                         alert('Zone extraction completed successfully!');
@@ -980,6 +983,73 @@
                     extractButton.innerHTML = originalText;
                     extractButton.disabled = false;
                 });
+        }
+
+        // Add a function to display raw JSON output
+        function showRawJsonOutput(data) {
+            // Check if the json-output div exists, if not create it
+            let jsonOutputContainer = document.getElementById('json-output-container');
+
+            if (!jsonOutputContainer) {
+                // Create the container for JSON output
+                jsonOutputContainer = document.createElement('div');
+                jsonOutputContainer.id = 'json-output-container';
+                jsonOutputContainer.className = 'bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6';
+
+                // Get the mapping container (right side) and insert before the save button section
+                const mappingContainer = document.querySelector('.lg\\:w-1\\/2.bg-white.rounded-lg');
+
+                if (mappingContainer) {
+                    // Create a header with toggle functionality
+                    const header = document.createElement('div');
+                    header.className = 'flex items-center justify-between mb-3 cursor-pointer';
+                    header.innerHTML = `
+                <h4 class="text-md font-semibold text-gray-800">Raw Extraction Output (JSON)</h4>
+                <button id="toggle-json" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                    Show JSON
+                </button>
+            `;
+
+                    jsonOutputContainer.appendChild(header);
+
+                    // Create pre element for JSON content (initially hidden)
+                    const jsonPre = document.createElement('pre');
+                    jsonPre.id = 'json-content';
+                    jsonPre.className = 'bg-gray-50 p-4 rounded-lg overflow-auto text-xs hidden';
+                    jsonPre.style.maxHeight = '300px';
+                    jsonOutputContainer.appendChild(jsonPre);
+
+                    // Insert the container at the top of the mapping section
+                    mappingContainer.insertBefore(jsonOutputContainer, mappingContainer.firstChild.nextSibling);
+
+                    // Add toggle functionality
+                    document.getElementById('toggle-json').addEventListener('click', function () {
+                        const jsonContent = document.getElementById('json-content');
+                        const isHidden = jsonContent.classList.contains('hidden');
+
+                        if (isHidden) {
+                            jsonContent.classList.remove('hidden');
+                            this.textContent = 'Hide JSON';
+                        } else {
+                            jsonContent.classList.add('hidden');
+                            this.textContent = 'Show JSON';
+                        }
+                    });
+                }
+            }
+
+            // Update JSON content
+            const jsonPre = document.getElementById('json-content');
+            if (jsonPre) {
+                jsonPre.textContent = JSON.stringify(data, null, 2);
+
+                // If we have data, automatically show it
+                if (data && (Object.keys(data.entities || {}).length > 0 || (data.tables || []).length > 0)) {
+                    jsonPre.classList.remove('hidden');
+                    const toggleBtn = document.getElementById('toggle-json');
+                    if (toggleBtn) toggleBtn.textContent = 'Hide JSON';
+                }
+            }
         }
 
         function startDrawingZone(e) {
@@ -1052,13 +1122,34 @@
             const width = finalX - window.startX;
             const height = finalY - window.startY;
 
-            // Create a new zone (only if dimensions are significant)
+            // Only create a zone if dimensions are significant
             if (Math.abs(width) > 20 && Math.abs(height) > 20) {
+                const containerWidth = pdfContainer.scrollWidth;
+                const containerHeight = pdfContainer.scrollHeight;
+
+                if (containerWidth === 0 || containerHeight === 0) {
+                    alert("Could not determine PDF dimensions. Please try re-uploading the file.");
+                    return;
+                }
+
+                // Absolute coordinates for drawing
+                const absX = Math.min(window.startX, finalX);
+                const absY = Math.min(window.startY, finalY);
+                const absWidth = Math.abs(width);
+                const absHeight = Math.abs(height);
+
+                // Normalized coordinates for backend extraction
                 const newZone = {
-                    x: Math.min(window.startX, finalX),
-                    y: Math.min(window.startY, finalY),
-                    width: Math.abs(width),
-                    height: Math.abs(height),
+                    // Absolute (for drawing)
+                    abs_x: absX,
+                    abs_y: absY,
+                    abs_width: absWidth,
+                    abs_height: absHeight,
+                    // Normalized (for backend)
+                    x: absX / containerWidth,
+                    y: absY / containerHeight,
+                    width: absWidth / containerWidth,
+                    height: absHeight / containerHeight,
                     type: 'field',
                     field_name: 'Zone ' + (window.zones.length + 1)
                 };
@@ -1076,6 +1167,7 @@
             drawExistingZones();
         }
 
+
         function drawExistingZones() {
             const canvas = document.getElementById('zone-canvas');
             const ctx = canvas.getContext('2d');
@@ -1087,13 +1179,14 @@
                 ctx.fillStyle = zone.type === 'field' ? 'rgba(0, 123, 255, 0.1)' : 'rgba(255, 123, 0, 0.1)';
                 ctx.lineWidth = 2;
 
-                ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
-                ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
+                ctx.strokeRect(zone.abs_x, zone.abs_y, zone.abs_width, zone.abs_height);
+                ctx.fillRect(zone.abs_x, zone.abs_y, zone.abs_width, zone.abs_height);
+                ctx.fillText(zone.field_name, zone.abs_x + 5, zone.abs_y + 15);
 
                 // Add label
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
                 ctx.font = '12px Arial';
-                ctx.fillText(zone.field_name, zone.x + 5, zone.y + 15);
+                ctx.fillText(zone.field_name, zone.abs_x + 5, zone.abs_y + 15);
             });
         }
 

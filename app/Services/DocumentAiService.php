@@ -5,40 +5,80 @@ namespace App\Services;
 use Google\Cloud\DocumentAI\V1\Client\DocumentProcessorServiceClient;
 use Google\Cloud\DocumentAI\V1\ProcessRequest;
 use Google\Cloud\DocumentAI\V1\RawDocument;
-use Google\Cloud\DocumentAI\V1\OcrConfig;
 use Google\Cloud\DocumentAI\V1\ProcessOptions;
+use Google\Cloud\DocumentAI\V1\OcrConfig;
 use Illuminate\Support\Facades\Log;
-use Imagick;
 
 class DocumentAiService
 {
-    protected DocumentProcessorServiceClient $client;
-    protected string $projectId;
-    protected string $location = 'us';
-
-    // Map document types to specialized processors
-    protected array $processorMap = [];
+    protected $client;
+    protected $projectId;
+    protected $location = 'us';
+    protected $processorMap = [];
 
     /**
      * Create a new service instance.
      */
     public function __construct()
     {
-        // Set up processor map in the constructor
-        $this->processorMap = [
-            'ocr' => env('GOOGLE_CLOUD_DOCUMENT_OCR_PROCESSOR_ID'),
-            'lab_report' => env('GOOGLE_CLOUD_DOCUMENT_AI_PROCESSOR_ID'),
-            'default' => env('GOOGLE_CLOUD_DOCUMENT_AI_PROCESSOR_ID')
-        ];
-        
-        // Use the credentials we configured in config/services.php
-        $credentials = config('services.google.credentials');
-        $this->projectId = config('services.google.project_id');
+        // Use config helper instead of direct env() calls
+        $this->projectId = config('services.google.project_id', 'clinex-application');
+        $this->location = config('services.google.location', 'us');
 
-        // Create a new Document AI client, authenticating with our key
-        $this->client = new DocumentProcessorServiceClient([
-            'credentials' => $credentials,
-        ]);
+        // Load processor IDs with logging
+        $ocrId = config('services.google.ocr_processor_id', env('GOOGLE_CLOUD_DOCUMENT_OCR_PROCESSOR_ID', '7039da43cbe33faf'));
+        $defaultId = config('services.google.document_ai_processor_id', env('GOOGLE_CLOUD_DOCUMENT_AI_PROCESSOR_ID', 'a2439f686e4b0f79'));
+
+        Log::debug("Loaded OCR processor ID: {$ocrId}");
+        Log::debug("Loaded default processor ID: {$defaultId}");
+
+        $this->processorMap = [
+            'ocr' => $ocrId,
+            'lab_report' => $defaultId,
+            'default' => $defaultId
+        ];
+
+        // Create Document AI client
+        try {
+            $this->client = new DocumentProcessorServiceClient([
+                'credentials' => config('services.google.credentials'),
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Failed to initialize Document AI client: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get the correctly formatted processor name.
+     */
+    protected function getFormattedProcessorName($processorType = 'default')
+    {
+        $processorId = $this->processorMap[$processorType] ?? $this->processorMap['default'];
+
+        // If empty, log and use hardcoded fallbacks
+        if (empty($processorId)) {
+            Log::warning("Processor ID not found for type: {$processorType}, using hardcoded fallback");
+
+            // Hardcoded fallbacks from your .env
+            $hardcodedMap = [
+                'ocr' => '7039da43cbe33faf',
+                'lab_report' => 'a2439f686e4b0f79',
+                'default' => 'a2439f686e4b0f79'
+            ];
+
+            $processorId = $hardcodedMap[$processorType] ?? $hardcodedMap['default'];
+        }
+
+        // Debug what we're using
+        Log::info("Using processor ID for {$processorType}: {$processorId}");
+
+        // Check if already a fully qualified name
+        if (str_starts_with($processorId, 'projects/')) {
+            return $processorId;
+        }
+
+        // Format it correctly
+        return "projects/{$this->projectId}/locations/{$this->location}/processors/{$processorId}";
     }
 
     /**
@@ -46,23 +86,26 @@ class DocumentAiService
      */
     public function processDocumentEnhanced(
         string $filePath,
-        string $processorIdOrType = 'lab_report',
+        string $processorType = 'lab_report',
         string $mimeType = 'application/pdf',
         bool $enhancePdf = true,
         bool $useAdvancedFeatures = true
     ) {
-        // Determine processor ID from type if needed
-        $processorId = $this->getProcessorId($processorIdOrType);
-
-        // Optionally enhance the PDF for better OCR
-        $fileToProcess = $filePath;
-        if ($enhancePdf) {
-            $fileToProcess = $this->enhancePdfForProcessing($filePath);
-        }
-
         try {
+            // Fix path inconsistencies (convert forward/back slashes)
+            $filePath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $filePath);
+
+            // Optionally enhance the PDF for better OCR
+            $fileToProcess = $filePath;
+            if ($enhancePdf) {
+                $fileToProcess = $this->enhancePdfForProcessing($filePath);
+            }
+
+            // Get formatted processor name
+            $formattedProcessorName = $this->getFormattedProcessorName($processorType);
+
             // Process with retry logic
-            $document = $this->processDocumentWithRetry($fileToProcess, $processorId, $mimeType, $useAdvancedFeatures);
+            $document = $this->processDocumentWithRetry($fileToProcess, $formattedProcessorName, $mimeType, $useAdvancedFeatures);
 
             if (!$document) {
                 return null;
@@ -82,7 +125,7 @@ class DocumentAiService
             Log::error('Enhanced document processing failed: ' . $e->getMessage());
 
             // Clean up temporary enhanced file if created
-            if ($enhancePdf && $fileToProcess !== $filePath) {
+            if (isset($fileToProcess) && $enhancePdf && $fileToProcess !== $filePath) {
                 @unlink($fileToProcess);
             }
 
@@ -91,83 +134,11 @@ class DocumentAiService
     }
 
     /**
-     * Get processor ID from document type or return the ID if directly provided.
-     */
-    protected function getProcessorId(string $processorIdOrType): string
-    {
-        if (isset($this->processorMap[$processorIdOrType])) {
-            return $this->processorMap[$processorIdOrType];
-        }
-
-        // If not found in map, assume it's already a processor ID
-        return $processorIdOrType;
-    }
-
-    /**
-     * Process a document using a specific Document AI processor.
-     */
-    public function processDocument(
-        string $filePath,
-        string $processorId,
-        string $mimeType = 'application/pdf',
-        bool $useAdvancedFeatures = false
-    ) {
-        try {
-            // The full resource name of the processor
-            $name = $this->client->processorName($this->projectId, $this->location, $processorId);
-
-            // Read the file content
-            $documentContent = file_get_contents($filePath);
-            if ($documentContent === false) {
-                Log::error("Failed to read file content from path: {$filePath}");
-                return null;
-            }
-
-            // Create a RawDocument object
-            $rawDocument = new RawDocument([
-                'content' => $documentContent,
-                'mime_type' => $mimeType,
-            ]);
-
-            // Create the basic process request
-            $request = new ProcessRequest();
-            $request->setName($name);
-            $request->setRawDocument($rawDocument);
-
-            // Add advanced features if requested - but using setter methods instead of constructor
-            // This is the key fix - don't use the array constructor approach for these fields
-            if ($useAdvancedFeatures) {
-                // Initialize advanced features using the v2.2 API methods
-                $ocrConfig = new OcrConfig();
-                $ocrConfig->setEnableNativePdfParsing(true);
-                $ocrConfig->setEnableImageQualityScores(true);
-                
-                $request->setOcrConfig($ocrConfig);
-                
-                // Skip the ProcessOptions for now since it's causing issues
-                if (method_exists($request, 'setFormExtractionEnabled')) {
-                    $request->setFormExtractionEnabled(true);
-                }
-            }
-
-            // Send the request to the Document AI API
-            $result = $this->client->processDocument($request);
-
-            // Return the structured Document object from the response
-            return $result->getDocument();
-
-        } catch (\Exception $e) {
-            Log::error('Google Document AI processing failed: ' . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
      * Process document with retry logic for better reliability.
      */
     public function processDocumentWithRetry(
-        string $filePath,
-        string $processorId,
+        string $documentPath,
+        string $formattedProcessorName,
         string $mimeType = 'application/pdf',
         bool $useAdvancedFeatures = true,
         int $maxRetries = 3
@@ -177,7 +148,7 @@ class DocumentAiService
 
         while ($attempt < $maxRetries) {
             try {
-                $document = $this->processDocument($filePath, $processorId, $mimeType, $useAdvancedFeatures);
+                $document = $this->processDocument($documentPath, $formattedProcessorName, $mimeType, $useAdvancedFeatures);
 
                 if ($document) {
                     return $document;
@@ -201,6 +172,60 @@ class DocumentAiService
     }
 
     /**
+     * Process a document using Google Document AI.
+     */
+    public function processDocument(
+        string $filePath,
+        string $formattedProcessorName,
+        string $mimeType = 'application/pdf',
+        bool $useAdvancedFeatures = false
+    ) {
+        try {
+            // Fix path inconsistencies (convert forward/back slashes)
+            $filePath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $filePath);
+
+            // Make sure file exists and is readable
+            if (!file_exists($filePath)) {
+                Log::error("File does not exist: {$filePath}");
+                return null;
+            }
+
+            // Read the file content
+            $documentContent = file_get_contents($filePath);
+            if ($documentContent === false) {
+                Log::error("Failed to read file content from path: {$filePath}");
+                return null;
+            }
+
+            Log::info("Successfully read file ({$filePath}), size: " . strlen($documentContent) . " bytes");
+
+            // Create a RawDocument object
+            $rawDocument = new RawDocument([
+                'content' => $documentContent,
+                'mime_type' => $mimeType,
+            ]);
+
+            // Create the basic process request
+            $request = new ProcessRequest();
+            $request->setName($formattedProcessorName);
+            $request->setRawDocument($rawDocument);
+
+            // NO advanced features - they're causing compatibility issues
+            // We'll add them back gradually when basic functionality works
+
+            // Send the request to the Document AI API
+            $result = $this->client->processDocument($request);
+
+            // Return the structured Document object from the response
+            return $result->getDocument();
+
+        } catch (\Exception $e) {
+            Log::error('Google Document AI processing failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Pre-process PDF to enhance quality for better OCR results.
      */
     public function enhancePdfForProcessing(string $filePath): string
@@ -221,6 +246,16 @@ class DocumentAiService
 
             // Check if we have Imagick extension and class available
             if (extension_loaded('imagick') && class_exists('\Imagick')) {
+                // On Windows systems, tell ImageMagick where to find Ghostscript
+                if (PHP_OS === 'WINNT' || PHP_OS === 'Windows') {
+                    // Try to find gswin64c.exe in common locations
+                    $gsPath = 'C:\Program Files\gs\gs10.05.1\bin';
+                    if (is_dir($gsPath)) {
+                        putenv("MAGICK_GHOSTSCRIPT_PATH={$gsPath}");
+                    }
+                }
+
+                // Create Imagick instance with correct namespace
                 $imagick = new \Imagick();
                 $imagick->readImage($filePath);
 
@@ -233,11 +268,8 @@ class DocumentAiService
                 // Convert to grayscale to simplify processing
                 $imagick->setImageColorspace(\Imagick::COLORSPACE_GRAY);
 
-                // Reduce noise in the image
-                $imagick->reduceNoiseImage(3);
-
-                // Improve sharpness
-                $imagick->sharpenImage(0, 1.0);
+                // REMOVED: reduceNoiseImage - not available in your Imagick version
+                // REMOVED: sharpenImage - may not be available
 
                 // Save the enhanced PDF
                 $imagick->writeImages($outputPath, true);
@@ -262,196 +294,453 @@ class DocumentAiService
     private function cleanupExtractedData($document): array
     {
         $cleanedData = [
-            'text' => $this->sanitizeText($document->getText()),
+            'text' => $document->getText(),
             'entities' => [],
-            'tables' => [],
-            'custom_fields' => []
+            'tables' => []
         ];
 
-        // Process entities
+        // Simple entities extraction for now
         foreach ($document->getEntities() as $entity) {
             $type = $entity->getType();
             $text = $entity->getMentionText();
-            $confidence = $entity->getConfidence();
 
-            // Clean up text values
-            $text = $this->sanitizeText($text);
-
-            $cleanedData['entities'][] = [
-                'type' => $type,
-                'text' => $text,
-                'confidence' => $confidence
-            ];
+            $cleanedData['entities'][$type] = $text;
         }
 
-        // Process tables
-        $pages = $document->getPages();
-        $tableIndex = 1;
-
-        foreach ($pages as $pageIndex => $page) {
-            $tables = $page->getTables();
-
-            foreach ($tables as $tableNum => $table) {
-                $cleanTable = [
-                    'name' => "Table {$tableIndex}",
-                    'headers' => [],
+        // Simple table extraction
+        foreach ($document->getPages() as $page) {
+            foreach ($page->getTables() as $index => $table) {
+                $tableData = [
+                    'name' => "Table " . ($index + 1),
                     'rows' => []
                 ];
 
-                // Extract headers from the table
-                $headerRows = $table->getHeaderRows();
-                if ($headerRows && count($headerRows) > 0) {
-                    $headerRow = $headerRows[0];
-                    $cells = $headerRow->getCells();
-                    foreach ($cells as $cell) {
-                        $text = $this->extractTextFromCell($cell, $document->getText());
-                        $cleanTable['headers'][] = $this->sanitizeText($text);
-                    }
-                }
-
-                // Extract data rows
-                $bodyRows = $table->getBodyRows();
-                foreach ($bodyRows as $row) {
+                // Extract rows
+                foreach ($table->getBodyRows() as $row) {
                     $rowData = [];
-                    $cells = $row->getCells();
-                    foreach ($cells as $cell) {
-                        $text = $this->extractTextFromCell($cell, $document->getText());
-                        $rowData[] = $this->sanitizeText($text);
+                    foreach ($row->getCells() as $cell) {
+                        // Get text segments from the cell
+                        $textSegments = $cell->getLayout()->getTextAnchor()->getTextSegments();
+                        $cellText = '';
+                        foreach ($textSegments as $segment) {
+                            $startIndex = $segment->getStartIndex();
+                            $endIndex = $segment->getEndIndex();
+                            $cellText .= substr($document->getText(), $startIndex, $endIndex - $startIndex);
+                        }
+                        $rowData[] = trim($cellText);
                     }
-
-                    // Skip empty rows
-                    if (!empty(array_filter($rowData))) {
-                        $cleanTable['rows'][] = $rowData;
-                    }
+                    $tableData['rows'][] = $rowData;
                 }
 
-                // Only add tables that actually contain data
-                if (!empty($cleanTable['headers']) || !empty($cleanTable['rows'])) {
-                    $cleanedData['tables'][] = $cleanTable;
-                    $tableIndex++;
-                }
+                $cleanedData['tables'][] = $tableData;
             }
         }
-
-        // Add custom field extraction using regex patterns
-        $cleanedData['custom_fields'] = $this->extractCustomFields($cleanedData['text']);
 
         return $cleanedData;
     }
 
     /**
-     * Extract text from a table cell.
+     * Simple mock version that returns sample data for UI testing
      */
-    private function extractTextFromCell($cell, $fullText): string
+    public function extractTextFromZonesMock($pdfPath, $zones)
+    {
+        Log::info("Using mock data for zones extraction testing");
+
+        $result = [
+            'entities' => [],
+            'tables' => []
+        ];
+
+        foreach ($zones as $zone) {
+            if ($zone['type'] === 'field') {
+                // Generate appropriate sample data based on field name
+                if (stripos($zone['field_name'], 'name') !== false) {
+                    $result['entities'][$zone['field_name']] = 'John Smith';
+                } else if (stripos($zone['field_name'], 'dob') !== false) {
+                    $result['entities'][$zone['field_name']] = '1978-05-15';
+                } else if (stripos($zone['field_name'], 'age') !== false) {
+                    $result['entities'][$zone['field_name']] = '47';
+                } else if (stripos($zone['field_name'], 'gender') !== false) {
+                    $result['entities'][$zone['field_name']] = 'Male';
+                } else if (stripos($zone['field_name'], 'id') !== false) {
+                    $result['entities'][$zone['field_name']] = 'PT12345';
+                } else {
+                    $result['entities'][$zone['field_name']] = 'Sample data for ' . $zone['field_name'];
+                }
+            } else if ($zone['type'] === 'table') {
+                $result['tables'][] = [
+                    'name' => $zone['field_name'],
+                    'rows' => [
+                            ['Test Name', 'Result', 'Unit', 'Reference Range', 'Flag'],
+                            ['Hemoglobin', '14.2', 'g/dL', '13.0-17.0', 'Normal'],
+                            ['WBC', '7.5', '10³/μL', '4.5-11.0', 'Normal'],
+                            ['Platelet Count', '250', '10³/μL', '150-450', 'Normal'],
+                            ['Glucose', '95', 'mg/dL', '70-99', 'Normal']
+                        ]
+                ];
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Extract text and tables from specified zones in a PDF document.
+     */
+    public function extractTextFromZones($pdfPath, $zones)
     {
         try {
-            $layout = $cell->getLayout();
-            if (!$layout)
-                return '';
+            Log::info("Processing PDF for zonal extraction: {$pdfPath}");
 
-            $textAnchor = $layout->getTextAnchor();
-            if (!$textAnchor)
-                return '';
+            // Process with OCR processor first (better for pure text extraction)
+            $ocrProcessorName = $this->getFormattedProcessorName('ocr');
+            $ocrDocument = $this->processDocumentWithRetry($pdfPath, $ocrProcessorName, 'application/pdf', false);
 
-            $textSegments = $textAnchor->getTextSegments();
-            $text = '';
+            // Process with Form Parser processor (better for structured data)
+            $formProcessorName = $this->getFormattedProcessorName('default'); // 'default' maps to your form parser
+            $formDocument = $this->processDocumentWithRetry($pdfPath, $formProcessorName, 'application/pdf', false);
 
-            foreach ($textSegments as $segment) {
-                $startIndex = $segment->getStartIndex();
-                $endIndex = $segment->getEndIndex();
+            if (!$ocrDocument && !$formDocument) {
+                throw new \Exception("Document AI extraction returned no results from either processor");
+            }
 
-                if ($startIndex !== null && $endIndex !== null) {
-                    $text .= substr($fullText, $startIndex, $endIndex - $startIndex);
+            // Use the document that worked, with preference for form parser for tables
+            $textDocument = $ocrDocument ?? $formDocument; // Prefer OCR for text
+            $tableDocument = $formDocument ?? $ocrDocument; // Prefer Form Parser for tables
+
+            // Log which processors succeeded
+            if ($ocrDocument)
+                Log::info("OCR processor successful");
+            if ($formDocument)
+                Log::info("Form parser processor successful");
+
+            // Calculate dimensions from whichever document we have
+            $document = $textDocument; // Use for dimension calculation
+
+            // Rest of your existing dimension calculation code...
+            $firstPage = $document->getPages()[0];
+            $pageLayout = $firstPage->getLayout();
+
+            // Check if we have a valid bounding poly
+            if ($pageLayout && $pageLayout->getBoundingPoly()) {
+                $vertices = $pageLayout->getBoundingPoly()->getVertices();
+
+                // Calculate dimensions from bounding polygon vertices (bottom-right minus top-left)
+                $width = $vertices[2]->getX() - $vertices[0]->getX();
+                $height = $vertices[2]->getY() - $vertices[0]->getY();
+
+                Log::info("Document dimensions calculated: width={$width}, height={$height}");
+            } else {
+                // Fallback to default dimensions if not available
+                Log::warning("Could not determine document dimensions, using defaults");
+                $width = 612;  // Standard US Letter width in points (8.5 x 72)
+                $height = 792; // Standard US Letter height in points (11 x 72)
+            }
+
+            // Use the appropriate document for each type of extraction
+            $result = [
+                'entities' => [],
+                'tables' => []
+            ];
+
+            foreach ($zones as $zone) {
+                // Convert normalized zone to absolute coordinates
+                $absZone = [
+                    'x' => $zone['x'] * $width,
+                    'y' => $zone['y'] * $height,
+                    'width' => $zone['width'] * $width,
+                    'height' => $zone['height'] * $height
+                ];
+
+                if ($zone['type'] === 'field') {
+                    $zoneText = $this->extractTextFromDocumentZone($textDocument, $absZone);
+                    $result['entities'][$zone['field_name']] = trim($zoneText);
+                } else if ($zone['type'] === 'table') {
+                    $tableRows = $this->extractTableFromZone($tableDocument, $absZone);
+                    if (!empty($tableRows)) {
+                        $result['tables'][] = [
+                            'name' => $zone['field_name'],
+                            'rows' => $tableRows
+                        ];
+                    }
                 }
             }
 
-            return $text;
+            return $result;
+
         } catch (\Exception $e) {
-            return '';
+            Log::error("Zonal extraction failed: " . $e->getMessage());
+            throw $e;
         }
     }
 
     /**
-     * Sanitize text by removing special characters and normalizing whitespace.
+     * Extract text from a specific zone in the document - compatible with Document AI v2.2.1
      */
-    private function sanitizeText(?string $text): string
+    private function extractTextFromDocumentZone($document, $zone)
     {
-        if (empty($text))
-            return '';
+        $fullText = $document->getText();
+        $extractedText = '';
 
-        // Fix character encoding issues
-        if (!mb_check_encoding($text, 'UTF-8')) {
-            $encoding = mb_detect_encoding($text, ['UTF-8', 'ISO-8859-1', 'Windows-1252', 'ASCII'], true);
-            if ($encoding !== false) {
-                $text = mb_convert_encoding($text, 'UTF-8', $encoding);
-            } else {
-                $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+        // Log zone for debugging
+        Log::debug("Extracting from zone: " . json_encode($zone));
+
+        // Loop through pages
+        foreach ($document->getPages() as $pageIndex => $page) {
+            // Work directly with text segments instead of blocks/paragraphs structure
+            // This approach works across different versions of Document AI
+            $textSegments = [];
+
+            // Get all text segments with their bounding boxes
+            foreach ($page->getTokens() as $token) {
+                if ($token->getLayout() && $token->getLayout()->getBoundingPoly()) {
+                    $vertices = $token->getLayout()->getBoundingPoly()->getVertices();
+                    if (count($vertices) >= 4) {
+                        $tokenX = $vertices[0]->getX();
+                        $tokenY = $vertices[0]->getY();
+                        $tokenWidth = $vertices[2]->getX() - $tokenX;
+                        $tokenHeight = $vertices[2]->getY() - $tokenY;
+
+                        // Check if this token is within our zone
+                        if (
+                            $this->isBoxInZone([
+                                'x' => $tokenX,
+                                'y' => $tokenY,
+                                'width' => $tokenWidth,
+                                'height' => $tokenHeight
+                            ], $zone)
+                        ) {
+                            // Get text content of this token
+                            if ($token->getLayout()->getTextAnchor()) {
+                                $anchor = $token->getLayout()->getTextAnchor();
+                                foreach ($anchor->getTextSegments() as $segment) {
+                                    $startIdx = $segment->getStartIndex();
+                                    $endIdx = $segment->getEndIndex();
+                                    $extractedText .= mb_substr($fullText, $startIdx, $endIdx - $startIdx, 'UTF-8');
+                                }
+                                $extractedText .= ' ';
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Add line breaks between lines of text
+            $extractedText = preg_replace('/\s{3,}/', "\n", $extractedText);
+        }
+
+        // Clean up extracted text
+        $extractedText = trim($extractedText);
+
+        // Log what we found
+        if (empty($extractedText)) {
+            Log::info("No text found in zone");
+            return "";
+        } else {
+            Log::info("Extracted from zone: " . substr($extractedText, 0, 100) . (strlen($extractedText) > 100 ? "..." : ""));
+            return $extractedText;
+        }
+    }
+
+    /**
+     * Generic helper to check if a box is within a zone
+     */
+    private function isBoxInZone($box, $zone)
+    {
+        // Calculate box boundaries
+        $boxRight = $box['x'] + $box['width'];
+        $boxBottom = $box['y'] + $box['height'];
+
+        // Calculate zone boundaries
+        $zoneRight = $zone['x'] + $zone['width'];
+        $zoneBottom = $zone['y'] + $zone['height'];
+
+        // Calculate overlap percentage
+        $overlapWidth = min($boxRight, $zoneRight) - max($box['x'], $zone['x']);
+        $overlapHeight = min($boxBottom, $zoneBottom) - max($box['y'], $zone['y']);
+
+        // Add debug logging
+        Log::debug("Box: ({$box['x']},{$box['y']}) to ({$boxRight},{$boxBottom})");
+        Log::debug("Zone: ({$zone['x']},{$zone['y']}) to ({$zoneRight},{$zoneBottom})");
+
+        // Box is in zone if there's overlap
+        if ($overlapWidth > 0 && $overlapHeight > 0) {
+            $boxArea = $box['width'] * $box['height'];
+            $overlapArea = $overlapWidth * $overlapHeight;
+            $overlapPercentage = $overlapArea / $boxArea;
+
+            // Lower the threshold to 25%
+            $threshold = 0.25;
+
+            Log::debug("Overlap: " . round($overlapPercentage * 100, 2) . "% - " .
+                ($overlapPercentage >= $threshold ? "MATCH" : "NO MATCH"));
+
+            return $overlapPercentage >= $threshold;
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if a block is within the specified zone
+     */
+    private function isBlockInZone($block, $zone)
+    {
+        // Get bounding box of the block
+        $vertices = $block->getLayout()->getBoundingPoly()->getVertices();
+
+        // Calculate block's normalized coordinates
+        $blockX = $vertices[0]->getX();
+        $blockY = $vertices[0]->getY();
+        $blockWidth = $vertices[2]->getX() - $blockX;
+        $blockHeight = $vertices[2]->getY() - $blockY;
+
+        // Check if block overlaps with zone
+        $zoneRight = $zone['x'] + $zone['width'];
+        $zoneBottom = $zone['y'] + $zone['height'];
+        $blockRight = $blockX + $blockWidth;
+        $blockBottom = $blockY + $blockHeight;
+
+        return !(
+            $blockRight < $zone['x'] ||
+            $blockX > $zoneRight ||
+            $blockBottom < $zone['y'] ||
+            $blockY > $zoneBottom
+        );
+    }
+
+    /**
+     * Check if a table is within the specified zone
+     */
+    private function isTableInZone($table, $zone)
+    {
+        // Similar to isBlockInZone but for table coordinates
+        $tableRight = $table['x'] + $table['width'];
+        $tableBottom = $table['y'] + $table['height'];
+        $zoneRight = $zone['x'] + $zone['width'];
+        $zoneBottom = $zone['y'] + $zone['height'];
+
+        // Check for overlap between table and zone
+        return !(
+            $tableRight < $zone['x'] ||
+            $table['x'] > $zoneRight ||
+            $tableBottom < $zone['y'] ||
+            $table['y'] > $zoneBottom
+        );
+    }
+
+    /**
+     * Extract table structure from a document zone
+     */
+    private function extractTableFromZone($document, $zone)
+    {
+        $tables = [];
+
+        // Look for tables in the zone
+        foreach ($document->getPages() as $page) {
+            foreach ($page->getTables() as $table) {
+                // Check if this table is within our zone
+                $tableLayout = $table->getLayout();
+                $tableVertices = $tableLayout->getBoundingPoly()->getVertices();
+
+                // Calculate table's normalized coordinates
+                $tableX = $tableVertices[0]->getX();
+                $tableY = $tableVertices[0]->getY();
+                $tableWidth = $tableVertices[2]->getX() - $tableX;
+                $tableHeight = $tableVertices[2]->getY() - $tableY;
+
+                // Check if table overlaps sufficiently with zone
+                if ($this->isTableInZone(['x' => $tableX, 'y' => $tableY, 'width' => $tableWidth, 'height' => $tableHeight], $zone)) {
+                    // Extract table rows
+                    $rows = [];
+
+                    // Get headers
+                    $headerRow = [];
+                    foreach ($table->getHeaderRows() as $headerRowObj) {
+                        $rowCells = [];
+                        foreach ($headerRowObj->getCells() as $cell) {
+                            $rowCells[] = $this->getCellText($document, $cell);
+                        }
+                        $headerRow = $rowCells;
+                    }
+
+                    // Add header row if it exists
+                    if (!empty($headerRow)) {
+                        $rows[] = $headerRow;
+                    }
+
+                    // Get body rows
+                    foreach ($table->getBodyRows() as $bodyRow) {
+                        $rowCells = [];
+                        foreach ($bodyRow->getCells() as $cell) {
+                            $rowCells[] = $this->getCellText($document, $cell);
+                        }
+                        $rows[] = $rowCells;
+                    }
+
+                    return $rows;
+                }
             }
         }
 
-        // Remove non-printable characters
-        $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $text);
+        // If no table is found in the zone, try to extract text and parse as CSV
+        $zoneText = $this->extractTextFromDocumentZone($document, $zone);
+        return $this->parseTextAsTable($zoneText);
+    }
 
-        // Fix common OCR errors
-        $replacements = [
-            'â¹' => '³',
-            'â¾' => '‰',
-            'â\s*$' => '',
-            'Ã©' => 'é',
-            'Ã¨' => 'è',
-            'Ã¼' => 'ü',
-            'Ãª' => 'ê',
-            '응' => '',
-        ];
+    /**
+     * Get text content from a table cell
+     */
+    private function getCellText($document, $cell)
+    {
+        $fullText = $document->getText();
+        $textAnchor = $cell->getLayout()->getTextAnchor();
+        $text = '';
 
-        foreach ($replacements as $search => $replace) {
-            $text = preg_replace('/' . $search . '/u', $replace, $text);
+        foreach ($textAnchor->getTextSegments() as $segment) {
+            $startIdx = $segment->getStartIndex();
+            $endIdx = $segment->getEndIndex();
+            $text .= mb_substr($fullText, $startIdx, $endIdx - $startIdx, 'UTF-8');
         }
-
-        // Normalize whitespace
-        $text = preg_replace('/\s+/', ' ', $text);
 
         return trim($text);
     }
 
     /**
-     * Extract custom fields using regex patterns.
+     * Parse free text into a table structure
      */
-    private function extractCustomFields($text): array
+    private function parseTextAsTable($text)
     {
-        $fields = [];
+        $lines = explode("\n", trim($text));
+        $rows = [];
 
-        // Patient information patterns
-        $patterns = [
-            'patient_name' => '/(?:name|patient name|patient)\s*[:;]\s*([^\n\r,\.]{3,40})/i',
-            'patient_id' => '/(?:id|patient id|patient number|mrn|chart)\s*[:;]\s*([a-z0-9\-]{3,20})/i',
-            'date_of_birth' => '/(?:dob|date of birth|birth date|born)\s*[:;]\s*([^\n\r,\.]{3,20})/i',
-            'age' => '/(?:age)\s*[:;]\s*(\d{1,3})\s*(?:years|yrs|yr|y)?/i',
-            'gender' => '/(?:gender|sex)\s*[:;]\s*([^\n\r,\.]{1,10})/i',
+        foreach ($lines as $line) {
+            // Try to detect delimiters
+            $line = trim($line);
+            if (empty($line))
+                continue;
 
-            // Lab information
-            'lab_name' => '/(?:laboratory|lab|performed at|performed by)\s*[:;]\s*([^\n\r,\.]{3,40})/i',
-            'collection_date' => '/(?:collection date|collected on|specimen date|sample date)\s*[:;]\s*([^\n\r,\.]{3,20})/i',
-            'report_date' => '/(?:report date|reported on|date of report|date reported)\s*[:;]\s*([^\n\r,\.]{3,20})/i',
-        ];
+            // Try different delimiters (tab, pipe, multiple spaces)
+            if (strpos($line, "\t") !== false) {
+                $cells = explode("\t", $line);
+            } else if (strpos($line, "|") !== false) {
+                $cells = array_map('trim', explode("|", $line));
+            } else {
+                // Split by multiple spaces
+                $cells = preg_split('/\s{2,}/', $line);
+            }
 
-        foreach ($patterns as $field => $pattern) {
-            if (preg_match($pattern, $text, $matches)) {
-                $fields[$field] = $this->sanitizeText($matches[1]);
+            // Filter empty cells and trim values
+            $cells = array_map('trim', $cells);
+            $cells = array_filter($cells, function ($cell) {
+                return !empty($cell);
+            });
+
+            if (!empty($cells)) {
+                $rows[] = array_values($cells);
             }
         }
 
-        // Extract lab test results using more sophisticated patterns
-        $testPattern = '/([A-Za-z\s\-\(\)]{3,30})\s*[:;]\s*((?:\d+(?:\.\d+)?)\s*(?:[a-zA-Z%\/]+)?)/';
-        preg_match_all($testPattern, $text, $matches, PREG_SET_ORDER);
-
-        $fields['tests'] = [];
-        foreach ($matches as $match) {
-            $testName = $this->sanitizeText($match[1]);
-            $value = $this->sanitizeText($match[2]);
-            $fields['tests'][$testName] = $value;
-        }
-
-        return $fields;
+        return $rows;
     }
 }
