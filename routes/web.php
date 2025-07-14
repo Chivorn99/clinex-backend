@@ -4,6 +4,7 @@ use App\Http\Controllers\LabReportCorrectionController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\TemplateController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\LabReportController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -53,6 +54,12 @@ Route::middleware('auth')->group(function () {
         Route::post('/templates/extract-zones', [TemplateController::class, 'extractFromZones'])
             ->middleware(['auth', 'verified'])
             ->name('templates.extract-zones');
+
+        Route::get('/lab-reports/process', function () {
+            return view('lab-reports.processor'); // Point to the new view
+        })->name('lab-reports.processor');
+        Route::post('/report/process', [LabReportController::class, 'process'])
+            ->name('report.process');
     });
 });
 

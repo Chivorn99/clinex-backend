@@ -16,13 +16,16 @@ class TemplateController extends Controller
 {
     protected $templateAnalyzer;
     protected $templateZonesService;
+    protected $documentAiService;
 
-    public function __construct(TemplateAnalyzerService $templateAnalyzer, TemplateZonesService $templateZonesService)
+    public function __construct(TemplateAnalyzerService $templateAnalyzer, TemplateZonesService $templateZonesService, DocumentAiService $documentAiService)
     {
         $this->templateAnalyzer = $templateAnalyzer;
         $this->templateZonesService = $templateZonesService;
+        $this->documentAiService = $documentAiService;
     }
 
+    
     /**
      * Display a listing of the resource.
      */

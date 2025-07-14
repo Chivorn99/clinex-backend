@@ -19,8 +19,8 @@
                         {{ __('Upload Reports') }}
                     </x-nav-link>
                     @can('admin')
-                        <x-nav-link :href="route('templates.index')" :active="request()->routeIs('templates.*')">
-                            {{ __('Templates') }}
+                        <x-nav-link :href="route('lab-reports.processor')" :active="request()->routeIs('templates.*')">
+                            {{ __('Process Lab-Report') }}
                         </x-nav-link>
                     @endcan
                 </div>

@@ -32,5 +32,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/templates/analyze', [TemplateController::class, 'analyze'])->name('api.templates.analyze');
         Route::post('/templates/create-from-pdf', [TemplateController::class, 'processPdfForTemplate'])->name('api.templates.create-from-pdf');
         Route::get('/templates/custom-categories', [TemplateController::class, 'getCustomCategories'])->name('api.templates.custom-categories');
+
+
     });
 });
