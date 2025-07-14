@@ -15,6 +15,7 @@ class LabReportController extends Controller
 {
 
     protected $documentAiService;
+    
 
     /**
      * Inject the DocumentAiService into the controller.
