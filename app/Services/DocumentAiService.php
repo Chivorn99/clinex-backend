@@ -6,21 +6,18 @@ use Google\Cloud\DocumentAI\V1\Client\DocumentProcessorServiceClient;
 use Google\Cloud\DocumentAI\V1\ProcessRequest;
 use Google\Cloud\DocumentAI\V1\RawDocument;
 use Illuminate\Support\Facades\Log;
-use App\Services\LabReportParserService; 
+use Illuminate\Support\Facades\Process;
 
 class DocumentAiService
 {
     protected $client;
-    protected $parser;
     protected $processorName;
 
     /**
      * Create a new service instance.
      */
-    public function __construct(LabReportParserService $parser)
+    public function __construct()
     {
-        $this->parser = $parser;
-
         try {
             // --- THIS IS THE BULLETPROOF FIX FOR YOUR CREDENTIALS ---
             // It directly points to the credentials file, bypassing .env lookup issues.
@@ -61,34 +58,93 @@ class DocumentAiService
     public function processLabReport(string $filePath): ?array
     {
         try {
-            $documentContent = file_get_contents($filePath);
-            if ($documentContent === false) {
-                Log::error("Failed to read file content: {$filePath}");
+            // Step 1: Extract raw OCR text using Google Document AI
+            $ocrText = $this->extractOCRText($filePath);
+            
+            if (!$ocrText) {
+                Log::error("Failed to extract OCR text from: {$filePath}");
                 return null;
             }
 
-            $rawDocument = new RawDocument([
-                'content' => $documentContent,
-                'mime_type' => 'application/pdf',
-            ]);
+            Log::debug("--- RAW OCR TEXT ---\n" . $ocrText . "\n--- END RAW OCR TEXT ---");
 
-            $request = (new ProcessRequest())
-                ->setName($this->processorName)
-                ->setRawDocument($rawDocument);
-
-            $result = $this->client->processDocument($request);
-            $document = $result->getDocument();
-
-            if (!$document) {
-                Log::warning("Document AI returned an empty document object for: {$filePath}");
-                return null;
-            }
-
-            // Hand off the complex parsing logic to our dedicated parser service
-            return $this->parser->parse($document);
+            // Step 2: Use Python script to parse the OCR text intelligently
+            return $this->parseWithPython($ocrText);
 
         } catch (\Exception $e) {
-            Log::error('Google Document AI processing failed: ' . $e->getMessage());
+            Log::error('Document processing failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    private function extractOCRText(string $filePath): ?string
+    {
+        $documentContent = file_get_contents($filePath);
+        $rawDocument = new RawDocument([
+            'content' => $documentContent,
+            'mime_type' => 'application/pdf',
+        ]);
+
+        $request = (new ProcessRequest())
+            ->setName($this->processorName)
+            ->setRawDocument($rawDocument);
+
+        $result = $this->client->processDocument($request);
+        $document = $result->getDocument();
+
+        return $document ? $document->getText() : null;
+    }
+
+    private function parseWithPython(string $ocrText): ?array
+    {
+        // Create temporary file with OCR text
+        $tempFile = tempnam(sys_get_temp_dir(), 'ocr_text_');
+        file_put_contents($tempFile, $ocrText);
+
+        // Path to your Python script
+        $pythonScript = base_path('scripts/python/document_ocr.py');
+        
+        // Check if Python script exists
+        if (!file_exists($pythonScript)) {
+            Log::error("Python script not found at: {$pythonScript}");
+            unlink($tempFile);
+            return null;
+        }
+
+        try {
+            // Run Python script and capture output
+            $result = Process::run([
+                'python', 
+                $pythonScript, 
+                $tempFile,
+                '--output-format', 'json'
+            ]);
+
+            // Clean up temp file
+            unlink($tempFile);
+
+            if ($result->successful()) {
+                $output = trim($result->output());
+                Log::debug("Python parser output: " . $output);
+                
+                $parsed = json_decode($output, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    return $parsed;
+                } else {
+                    Log::error("Failed to parse Python output as JSON: " . json_last_error_msg());
+                    return null;
+                }
+            } else {
+                Log::error("Python script failed: " . $result->errorOutput());
+                return null;
+            }
+
+        } catch (\Exception $e) {
+            // Clean up temp file on error
+            if (file_exists($tempFile)) {
+                unlink($tempFile);
+            }
+            Log::error("Error running Python parser: " . $e->getMessage());
             return null;
         }
     }

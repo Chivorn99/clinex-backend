@@ -37,7 +37,7 @@ class LabReportController extends Controller
         try {
             // 1. Validate the incoming request to ensure a PDF file is present.
             $request->validate([
-                'pdf_file' => 'required|file|mimes:pdf|max:10240', // 10MB Max
+                'pdf_file' => 'required|file|mimes:pdf|max:10240',
             ]);
 
             $pdfFile = $request->file('pdf_file');
