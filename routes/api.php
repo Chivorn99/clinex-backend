@@ -4,6 +4,7 @@ use App\Http\Controllers\LabReportController;
 use App\Http\Controllers\LabReportCorrectionController;
 use App\Http\Controllers\TemplateController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\ReportBatchController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProfileController;
@@ -32,6 +33,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('users/role/{role}', [UserController::class, 'getByRole']);
     Route::get('users/{id}/profile-picture', [UserController::class, 'getProfilePicture']);
 
+    // Batch processing routes
+    Route::apiResource('batches', ReportBatchController::class);
+    Route::post('batches/{reportBatch}/process', [ReportBatchController::class, 'process']);
+    Route::get('batches/{reportBatch}/status', [ReportBatchController::class, 'status']);
+    Route::post('batches/{reportBatch}/retry-failed', [ReportBatchController::class, 'retryFailed']);
     // Lab report upload and processing
     Route::post('/lab-reports/upload', [LabReportController::class, 'upload'])->name('api.lab-reports.upload');
     Route::get('/lab-reports', [LabReportController::class, 'index'])->name('api.lab-reports.index');
