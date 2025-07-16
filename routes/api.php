@@ -3,15 +3,35 @@
 use App\Http\Controllers\LabReportController;
 use App\Http\Controllers\LabReportCorrectionController;
 use App\Http\Controllers\TemplateController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\Auth\RegisteredUserController;
+use App\Http\Controllers\Auth\AuthenticatedSessionController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Requests\Auth\LoginRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
+Route::post('/register', [RegisteredUserController::class, 'registerApi']);
+    // ->middleware('throttle:login');
 
-// Lab report API routes
+Route::post('/login', [AuthenticatedSessionController::class, 'loginApi']);
+    // ->middleware('throttle:login');
+
+// User Management API routes
 Route::middleware('auth:sanctum')->group(function () {
+    // User CRUD operations
+    Route::apiResource('users', UserController::class);
+    Route::post('/logout', [AuthenticatedSessionController::class, 'logoutApi']);
+    Route::post('/profile/update', [ProfileController::class, 'updateApi'])
+        ->middleware('auth:sanctum');
+    Route::get('/profile', [ProfileController::class, 'showUser'])
+        ->middleware('auth:sanctum');
+    Route::get('users/role/{role}', [UserController::class, 'getByRole']);
+    Route::get('users/{id}/profile-picture', [UserController::class, 'getProfilePicture']);
+
     // Lab report upload and processing
     Route::post('/lab-reports/upload', [LabReportController::class, 'upload'])->name('api.lab-reports.upload');
     Route::get('/lab-reports', [LabReportController::class, 'index'])->name('api.lab-reports.index');
@@ -32,7 +52,5 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/templates/analyze', [TemplateController::class, 'analyze'])->name('api.templates.analyze');
         Route::post('/templates/create-from-pdf', [TemplateController::class, 'processPdfForTemplate'])->name('api.templates.create-from-pdf');
         Route::get('/templates/custom-categories', [TemplateController::class, 'getCustomCategories'])->name('api.templates.custom-categories');
-
-
     });
 });
