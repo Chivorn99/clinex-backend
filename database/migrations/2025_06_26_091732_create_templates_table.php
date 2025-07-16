@@ -12,15 +12,14 @@ return new class extends Migration {
     {
         Schema::create('templates', function (Blueprint $table) {
             $table->id();
-            $table->string('name'); // e.g., "Siemens ADVIA - Hematology"
+            $table->string('name');
             $table->text('description')->nullable();
-
-            // 🔥 NEW: The Google AI Processor ID this template uses
             $table->string('processor_id');
-
-            // 🔥 NEW: The JSON mapping rules
-            $table->json('mappings');
-
+            $table->json('structure_data')->nullable();
+            $table->json('mappings')->nullable();
+            $table->json('field_mappings')->nullable();
+            $table->string('status')->default('active');
+            $table->foreignId('created_by')->nullable()->constrained('users');
             $table->timestamps();
         });
     }

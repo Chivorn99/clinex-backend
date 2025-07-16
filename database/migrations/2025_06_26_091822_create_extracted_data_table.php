@@ -12,14 +12,14 @@ return new class extends Migration {
     {
         Schema::create('extracted_data', function (Blueprint $table) {
             $table->id();
-
-            // Foreign key to link this data to a specific uploaded report
-            $table->foreignId('lab_report_id')->constrained()->onDelete('cascade');
-
-            $table->string('section')->nullable(); // e.g., "hematology", "biochemistry"
-            $table->string('field_name'); // e.g., "wbc", "lym"
-            $table->text('value')->nullable();
-            $table->json('coordinates')->nullable(); // The coordinates where this data was found
+            $table->foreignId('lab_report_id')->constrained('lab_reports')->onDelete('cascade');
+            $table->string('category');
+            $table->string('test_name');
+            $table->text('result')->nullable();
+            $table->text('unit')->nullable();
+            $table->text('reference')->nullable();
+            $table->enum('flag',['H','L'])->nullable();
+            $table->json('coordinates')->nullable(); 
             $table->float('confidence_score')->nullable();
             $table->boolean('is_verified')->default(false);
             $table->timestamps();

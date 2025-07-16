@@ -12,10 +12,30 @@ return new class extends Migration {
     {
         Schema::create('lab_reports', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('batch_id')->nullable()->constrained('report_batches')->onDelete('set null');
+            $table->foreignId('patient_id')->nullable()->constrained('patients')->onDelete('set null');
+            $table->foreignId('uploaded_by')->constrained('users')->onDelete('cascade');
+            $table->foreignId('verified_by')->nullable()->constrained('users')->onDelete('set null');
+
+            // File info
             $table->string('original_filename');
-            $table->string('storage_path'); // The path to the file in Laravel's storage
-            $table->enum('status', ['pending', 'processing', 'processed', 'failed', 'verified']);
+            $table->string('stored_filename')->nullable();
+            $table->string('storage_path');
+            $table->unsignedBigInteger('file_size')->nullable();
+            $table->string('mime_type')->nullable();
+            $table->string('file_hash', 64)->unique()->nullable();
+
+            // Basic fields
+            $table->date('report_date')->nullable();
+            $table->text('notes')->nullable();
+            
+            // Status and processing
+            $table->enum('status', ['uploaded', 'processing', 'processed', 'verified', 'failed'])->default('uploaded');
+            $table->timestamp('processing_started_at')->nullable();
+            $table->timestamp('processing_completed_at')->nullable();
+            $table->timestamp('verified_at')->nullable();
             $table->text('processing_error')->nullable();
+            
             $table->timestamps();
         });
     }

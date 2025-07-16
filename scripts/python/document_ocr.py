@@ -341,13 +341,20 @@ def main():
         lab_parser = LabReportParser()
         result = lab_parser.parse(ocr_text)
         
+        # Fix encoding issues by ensuring proper UTF-8 output
         if args.output_format == 'json':
-            print(json.dumps(result, ensure_ascii=False))
+            output = json.dumps(result, ensure_ascii=False)
+            # Force UTF-8 encoding for Windows compatibility
+            sys.stdout.buffer.write(output.encode('utf-8'))
         else:
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+            output = json.dumps(result, ensure_ascii=False, indent=2)
+            # Force UTF-8 encoding for Windows compatibility
+            sys.stdout.buffer.write(output.encode('utf-8'))
             
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        error_msg = f"Error: {e}"
+        # Write error to stderr with proper encoding
+        sys.stderr.buffer.write(error_msg.encode('utf-8'))
         sys.exit(1)
 
 if __name__ == '__main__':

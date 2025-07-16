@@ -99,7 +99,7 @@ class DocumentAiService
     {
         // Create temporary file with OCR text
         $tempFile = tempnam(sys_get_temp_dir(), 'ocr_text_');
-        file_put_contents($tempFile, $ocrText);
+        file_put_contents($tempFile, $ocrText, LOCK_EX);
 
         // Path to your Python script
         $pythonScript = base_path('scripts/python/document_ocr.py');
@@ -112,9 +112,10 @@ class DocumentAiService
         }
 
         try {
-            // Run Python script and capture output
+            // Run Python script with explicit UTF-8 encoding
             $result = Process::run([
                 'python', 
+                '-u',  // Force unbuffered output
                 $pythonScript, 
                 $tempFile,
                 '--output-format', 'json'
@@ -125,17 +126,36 @@ class DocumentAiService
 
             if ($result->successful()) {
                 $output = trim($result->output());
+                Log::debug("Python parser raw output length: " . strlen($output));
                 Log::debug("Python parser output: " . $output);
+                
+                // Handle potential encoding issues
+                if (!mb_check_encoding($output, 'UTF-8')) {
+                    $output = utf8_encode($output);
+                }
                 
                 $parsed = json_decode($output, true);
                 if (json_last_error() === JSON_ERROR_NONE) {
                     return $parsed;
                 } else {
                     Log::error("Failed to parse Python output as JSON: " . json_last_error_msg());
+                    Log::error("Raw output: " . $output);
                     return null;
                 }
             } else {
-                Log::error("Python script failed: " . $result->errorOutput());
+                $errorOutput = $result->errorOutput();
+                Log::error("Python script failed with error: " . $errorOutput);
+                
+                // Check if there was actually valid output despite stderr messages
+                $stdOutput = trim($result->output());
+                if (!empty($stdOutput)) {
+                    Log::info("Attempting to parse output despite stderr messages");
+                    $parsed = json_decode($stdOutput, true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        return $parsed;
+                    }
+                }
+                
                 return null;
             }
 
