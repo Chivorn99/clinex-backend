@@ -9,9 +9,6 @@ class Patient extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     */
     protected $fillable = [
         'patient_id',
         'name',
@@ -20,9 +17,10 @@ class Patient extends Model
         'phone',
     ];
 
-    /**
-     * Get the lab reports for this patient.
-     */
+    protected $casts = [
+        'gender' => 'string',
+    ];
+
     public function labReports()
     {
         return $this->hasMany(LabReport::class);

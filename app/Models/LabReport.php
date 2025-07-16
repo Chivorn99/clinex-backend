@@ -6,78 +6,85 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class LabReport extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
+        'batch_id',
+        'patient_id',
+        'uploaded_by',
+        'verified_by',
         'original_filename',
         'stored_filename',
         'storage_path',
         'file_size',
         'mime_type',
-        'patient_name',
-        'patient_id', 
-        'template_id',
+        'file_hash',
         'report_date',
         'notes',
         'status',
+        'processing_started_at',
+        'processing_completed_at',
+        'verified_at',
         'processing_error',
-        'uploaded_at',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
         'report_date' => 'date',
-        'uploaded_at' => 'datetime',
         'file_size' => 'integer',
+        'processing_started_at' => 'datetime',
+        'processing_completed_at' => 'datetime',
+        'verified_at' => 'datetime',
     ];
 
-    /**
-     * Get all of the extractedData for the LabReport.
-     */
-    public function extractedData(): HasMany
+    public function batch(): BelongsTo
     {
-        return $this->hasMany(ExtractedData::class);
+        return $this->belongsTo(ReportBatch::class, 'batch_id');
     }
 
-    /**
-     * Get the template that this lab report uses.
-     */
+    public function patient(): BelongsTo
+    {
+        return $this->belongsTo(Patient::class);
+    }
+
+    public function uploader(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    public function verifier(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'verified_by');
+    }
+
     public function template(): BelongsTo
     {
         return $this->belongsTo(Template::class);
     }
 
-    /**
-     * Get the full path to the stored file.
-     */
+    public function extractedData(): HasMany
+    {
+        return $this->hasMany(ExtractedData::class);
+    }
+
+    public function extractedLabInfo(): HasOne
+    {
+        return $this->hasOne(ExtractedLabInfo::class);
+    }
+
     public function getFullPath(): string
     {
         return storage_path('app/private/' . $this->storage_path);
     }
 
-    /**
-     * Check if the file exists on disk.
-     */
     public function fileExists(): bool
     {
         return file_exists($this->getFullPath());
     }
 
-    /**
-     * Get human readable file size.
-     */
     public function getFormattedFileSizeAttribute(): string
     {
         if (!$this->file_size) {
@@ -86,35 +93,26 @@ class LabReport extends Model
 
         $bytes = $this->file_size;
         $units = ['B', 'KB', 'MB', 'GB'];
-        
+
         for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
             $bytes /= 1024;
         }
-        
+
         return round($bytes, 2) . ' ' . $units[$i];
     }
 
-    /**
-     * Scope to filter by status.
-     */
     public function scopeWithStatus($query, string $status)
     {
         return $query->where('status', $status);
     }
 
-    /**
-     * Scope to filter by date range.
-     */
     public function scopeUploadedBetween($query, $startDate, $endDate)
     {
-        return $query->whereBetween('uploaded_at', [$startDate, $endDate]);
+        return $query->whereBetween('created_at', [$startDate, $endDate]);
     }
 
-    /**
-     * Get the patient that owns this lab report.
-     */
-    public function patient()
+    public function scopeByBatch($query, int $batchId)  // ✅ Add this
     {
-        return $this->belongsTo(Patient::class);
+        return $query->where('batch_id', $batchId);
     }
 }

@@ -5,19 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 
 class Template extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'name',
+        'description',
         'processor_id',
         'structure_data',
         'field_mappings',
@@ -26,36 +23,36 @@ class Template extends Model
         'created_by',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
+   
     protected $casts = [
         'structure_data' => 'array',
         'field_mappings' => 'array',
         'mappings' => 'array',
     ];
 
-    /**
-     * Get all lab reports that use this template
-     */
+
     public function labReports(): HasMany
     {
         return $this->hasMany(LabReport::class, 'template_id');
     }
 
-    /**
-     * Scope to filter by processor ID
-     */
     public function scopeByProcessor($query, $processorId)
     {
         return $query->where('processor_id', $processorId);
     }
 
-
-    public function creator()
+    public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function reportBatches(): HasMany
+    {
+        return $this->hasMany(ReportBatch::class, 'template_id');
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('status', 'active');
     }
 }

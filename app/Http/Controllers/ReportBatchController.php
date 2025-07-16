@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\TemplateZones;
+use App\Models\ReportBatch;
 use Illuminate\Http\Request;
 
-class TemplateZonesController extends Controller
+class ReportBatchController extends Controller
 {
     /**
      * Display a listing of the resource.
@@ -34,7 +34,7 @@ class TemplateZonesController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(TemplateZones $templateZones)
+    public function show(ReportBatch $reportBatch)
     {
         //
     }
@@ -42,7 +42,7 @@ class TemplateZonesController extends Controller
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(TemplateZones $templateZones)
+    public function edit(ReportBatch $reportBatch)
     {
         //
     }
@@ -50,7 +50,7 @@ class TemplateZonesController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, TemplateZones $templateZones)
+    public function update(Request $request, ReportBatch $reportBatch)
     {
         //
     }
@@ -58,7 +58,7 @@ class TemplateZonesController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(TemplateZones $templateZones)
+    public function destroy(ReportBatch $reportBatch)
     {
         //
     }

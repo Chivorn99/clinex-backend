@@ -6,18 +6,20 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class ExtractedData extends Model
+class ExtractedLabInfo extends Model
 {
     use HasFactory;
 
+    protected $table = 'extracted_lab_info';
+
     protected $fillable = [
         'lab_report_id',
-        'section',
-        'field_name',
-        'value',
-        'coordinates',
-        'confidence_score',
-        'is_verified',
+        'lab_id',
+        'requested_by',
+        'requested_date',
+        'collected_date',
+        'analysis_date',
+        'validated_by',
     ];
 
     public function labReport(): BelongsTo

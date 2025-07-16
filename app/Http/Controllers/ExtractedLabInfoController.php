@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\OcrCorrection;
+use App\Models\ExtractedLabInfo;
 use Illuminate\Http\Request;
 
-class OcrCorrectionController extends Controller
+class ExtractedLabInfoController extends Controller
 {
     /**
      * Display a listing of the resource.
@@ -34,7 +34,7 @@ class OcrCorrectionController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(OcrCorrection $ocrCorrection)
+    public function show(ExtractedLabInfo $extractedLabInfo)
     {
         //
     }
@@ -42,7 +42,7 @@ class OcrCorrectionController extends Controller
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(OcrCorrection $ocrCorrection)
+    public function edit(ExtractedLabInfo $extractedLabInfo)
     {
         //
     }
@@ -50,7 +50,7 @@ class OcrCorrectionController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, OcrCorrection $ocrCorrection)
+    public function update(Request $request, ExtractedLabInfo $extractedLabInfo)
     {
         //
     }
@@ -58,7 +58,7 @@ class OcrCorrectionController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(OcrCorrection $ocrCorrection)
+    public function destroy(ExtractedLabInfo $extractedLabInfo)
     {
         //
     }
