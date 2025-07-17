@@ -31,12 +31,11 @@ class ProfileController extends Controller
         $user = $request->user();
         $user->makeHidden(['password', 'remember_token']);
 
+        $user->profile_picture_url = $user->profile_pic ? Storage::disk('public')->url($user->profile_pic) : null;
+
         return response()->json([
             'success' => true,
-            'data' => [
-                'user' => $user,
-                'profile_picture_url' => $user->profile_pic ? Storage::disk('public')->url($user->profile_pic) : null
-            ],
+            'user' => $user,
             'message' => 'Profile retrieved successfully'
         ]);
     }
@@ -62,7 +61,6 @@ class ProfileController extends Controller
                 $data['profile_pic'] = $path;
             }
 
-            // Only allow admins to update roles
             if (!$user->isAdmin() && isset($data['role'])) {
                 unset($data['role']);
             }
@@ -117,9 +115,7 @@ class ProfileController extends Controller
                 $validatedData['profile_pic'] = null;
             }
 
-            // Handle profile picture upload
             if ($request->hasFile('profile_pic')) {
-                // Delete old profile picture
                 if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
                     Storage::disk('public')->delete($user->profile_pic);
                 }
@@ -129,8 +125,6 @@ class ProfileController extends Controller
                 $path = $file->storeAs('profile_pics', $filename, 'public');
                 $validatedData['profile_pic'] = $path;
             }
-
-            // Only allow admins to update roles (or the user themselves if they're admin)
             if (!$user->isAdmin() && isset($validatedData['role'])) {
                 unset($validatedData['role']);
             }
@@ -142,8 +136,6 @@ class ProfileController extends Controller
             }
 
             $user->save();
-
-            // Refresh user data and hide sensitive fields
             $user = $user->fresh();
             $user->makeHidden(['password', 'remember_token']);
 
@@ -171,8 +163,6 @@ class ProfileController extends Controller
     public function destroy(Request $request): RedirectResponse
     {
         $user = $request->user();
-
-        // Delete profile picture if exists
         if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
             Storage::disk('public')->delete($user->profile_pic);
         }
@@ -193,18 +183,11 @@ class ProfileController extends Controller
     {
         try {
             $user = $request->user();
-
-            // Delete profile picture if exists
             if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
                 Storage::disk('public')->delete($user->profile_pic);
             }
-
-            // Delete all user tokens
             $user->tokens()->delete();
-
-            // Delete user
             $user->delete();
-
             return response()->json([
                 'success' => true,
                 'message' => 'Account deleted successfully'

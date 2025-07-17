@@ -24,6 +24,7 @@ Route::post('/login', [AuthenticatedSessionController::class, 'loginApi']);
 
 Route::post('password/otp-request', [OtpPasswordController::class, 'sendOtpApi']);
 Route::post('password/otp-verify', [OtpPasswordController::class, 'resetPasswordApi']);
+Route::post('password/otp-verify-only', [OtpPasswordController::class, 'verifyOtpApi']);
 
 // DEVELOPMENT ONLY: Routes for testing OTP functionality
 Route::get('password/otp-get/{email}', [OtpPasswordController::class, 'getOtpForTesting']);
