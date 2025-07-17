@@ -26,10 +26,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // User CRUD operations
     Route::apiResource('users', UserController::class);
     Route::post('/logout', [AuthenticatedSessionController::class, 'logoutApi']);
-    Route::post('/profile/update', [ProfileController::class, 'updateApi'])
-        ->middleware('auth:sanctum');
-    Route::get('/profile', [ProfileController::class, 'showUser'])
-        ->middleware('auth:sanctum');
+    
+    // Profile management
+    Route::get('/profile', [ProfileController::class, 'showUser']);
+    Route::post('/profile/update', [ProfileController::class, 'updateApi']);
+    Route::post('/profile/password', [ProfileController::class, 'updatePassword']);
+    Route::delete('/profile', [ProfileController::class, 'destroyApi']);
+
     Route::get('users/role/{role}', [UserController::class, 'getByRole']);
     Route::get('users/{id}/profile-picture', [UserController::class, 'getProfilePicture']);
 
