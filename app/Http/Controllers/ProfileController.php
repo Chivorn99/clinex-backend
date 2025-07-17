@@ -6,7 +6,6 @@ use App\Http\Requests\ProfileUpdateRequest;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 use Illuminate\Http\JsonResponse;
@@ -51,12 +50,7 @@ class ProfileController extends Controller
             $data = $request->validated();
             $user = $request->user();
 
-            if (!empty($data['password'])) {
-                $data['password'] = Hash::make($data['password']);
-            } else {
-                unset($data['password']);
-            }
-
+            // Handle profile picture upload
             if ($request->hasFile('profile_pic')) {
                 if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
                     Storage::disk('public')->delete($user->profile_pic);
@@ -68,6 +62,7 @@ class ProfileController extends Controller
                 $data['profile_pic'] = $path;
             }
 
+            // Only allow admins to update roles
             if (!$user->isAdmin() && isset($data['role'])) {
                 unset($data['role']);
             }
@@ -93,9 +88,8 @@ class ProfileController extends Controller
     public function updateApi(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:users,email,' . $request->user()->id],
-            'password' => 'nullable|string|min:8|confirmed',
+            'name' => 'string|max:255',
+            'email' => ['string', 'lowercase', 'email', 'max:255', 'unique:users,email,' . $request->user()->id],
             'role' => 'sometimes|required|in:admin,lab_technician',
             'phone_number' => 'nullable|string|max:25',
             'specialization' => 'nullable|string|max:255',
@@ -115,12 +109,7 @@ class ProfileController extends Controller
             $validatedData = $validator->validated();
             $user = $request->user();
 
-            if (!empty($validatedData['password'])) {
-                $validatedData['password'] = Hash::make($validatedData['password']);
-            } else {
-                unset($validatedData['password']);
-            }
-
+            // Handle profile picture removal
             if ($request->boolean('remove_profile_pic')) {
                 if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
                     Storage::disk('public')->delete($user->profile_pic);
@@ -128,7 +117,9 @@ class ProfileController extends Controller
                 $validatedData['profile_pic'] = null;
             }
 
+            // Handle profile picture upload
             if ($request->hasFile('profile_pic')) {
+                // Delete old profile picture
                 if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
                     Storage::disk('public')->delete($user->profile_pic);
                 }
@@ -139,6 +130,7 @@ class ProfileController extends Controller
                 $validatedData['profile_pic'] = $path;
             }
 
+            // Only allow admins to update roles (or the user themselves if they're admin)
             if (!$user->isAdmin() && isset($validatedData['role'])) {
                 unset($validatedData['role']);
             }
@@ -151,6 +143,7 @@ class ProfileController extends Controller
 
             $user->save();
 
+            // Refresh user data and hide sensitive fields
             $user = $user->fresh();
             $user->makeHidden(['password', 'remember_token']);
 
@@ -173,61 +166,10 @@ class ProfileController extends Controller
     }
 
     /**
-     * Update user password (API).
-     */
-    public function updatePassword(Request $request): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'current_password' => 'required|string',
-            'password' => 'required|string|min:8|confirmed',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $user = $request->user();
-
-        // Check current password
-        if (!Hash::check($request->current_password, (string)$user->password)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Current password is incorrect'
-            ], 422);
-        }
-
-        try {
-            $user->update([
-                'password' => Hash::make($request->password)
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Password updated successfully'
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update password',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Delete the user's account.
+     * Delete the user's account (Web).
      */
     public function destroy(Request $request): RedirectResponse
     {
-        $request->validateWithBag('userDeletion', [
-            'password' => ['required', 'current_password'],
-        ]);
-
         $user = $request->user();
 
         // Delete profile picture if exists
@@ -249,34 +191,18 @@ class ProfileController extends Controller
      */
     public function destroyApi(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'password' => 'required|string',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $user = $request->user();
-
-        if (!Hash::check($request->password, (string)$user->password)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Password is incorrect'
-            ], 422);
-        }
-
         try {
+            $user = $request->user();
+
+            // Delete profile picture if exists
             if ($user->profile_pic && Storage::disk('public')->exists($user->profile_pic)) {
                 Storage::disk('public')->delete($user->profile_pic);
             }
 
+            // Delete all user tokens
             $user->tokens()->delete();
 
+            // Delete user
             $user->delete();
 
             return response()->json([

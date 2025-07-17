@@ -16,7 +16,7 @@ class ProfileUpdateRequest extends FormRequest
             'role' => ['sometimes', 'required', 'in:admin,lab_technician'],
             'phone_number' => ['nullable', 'string', 'max:25'],
             'specialization' => ['nullable', 'string', 'max:255'],
-            'profile_pic' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif', 'max:2048'], // 2MB Max
+            'profile_pic' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif', 'max:2048'],
         ];
     }
 }

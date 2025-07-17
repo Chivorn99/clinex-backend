@@ -30,7 +30,6 @@ Route::middleware('auth:sanctum')->group(function () {
     // Profile management
     Route::get('/profile', [ProfileController::class, 'showUser']);
     Route::post('/profile/update', [ProfileController::class, 'updateApi']);
-    Route::post('/profile/password', [ProfileController::class, 'updatePassword']);
     Route::delete('/profile', [ProfileController::class, 'destroyApi']);
 
     Route::get('users/role/{role}', [UserController::class, 'getByRole']);
