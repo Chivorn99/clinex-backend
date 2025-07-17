@@ -8,6 +8,7 @@ use App\Http\Controllers\ReportBatchController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\Auth\OtpPasswordController;
 use App\Http\Requests\Auth\LoginRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -16,21 +17,30 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 Route::post('/register', [RegisteredUserController::class, 'registerApi']);
-    // ->middleware('throttle:login');
+// ->middleware('throttle:login');
 
 Route::post('/login', [AuthenticatedSessionController::class, 'loginApi']);
-    // ->middleware('throttle:login');
+// ->middleware('throttle:login');
+
+Route::post('password/otp-request', [OtpPasswordController::class, 'sendOtpApi']);
+Route::post('password/otp-verify', [OtpPasswordController::class, 'resetPasswordApi']);
+
+// DEVELOPMENT ONLY: Routes for testing OTP functionality
+Route::get('password/otp-get/{email}', [OtpPasswordController::class, 'getOtpForTesting']);
+Route::get('password/otp-get', [OtpPasswordController::class, 'getOtpForTesting']);
+Route::get('password/otp-all', [OtpPasswordController::class, 'getAllOtpsForTesting']);
 
 // User Management API routes
 Route::middleware('auth:sanctum')->group(function () {
     // User CRUD operations
     Route::apiResource('users', UserController::class);
     Route::post('/logout', [AuthenticatedSessionController::class, 'logoutApi']);
-    
+
     // Profile management
     Route::get('/profile', [ProfileController::class, 'showUser']);
     Route::post('/profile/update', [ProfileController::class, 'updateApi']);
     Route::delete('/profile', [ProfileController::class, 'destroyApi']);
+
 
     Route::get('users/role/{role}', [UserController::class, 'getByRole']);
     Route::get('users/{id}/profile-picture', [UserController::class, 'getProfilePicture']);
