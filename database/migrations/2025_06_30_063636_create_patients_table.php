@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('patient_id')->unique();
             $table->string('name');
             $table->string('age')->nullable();
-            $table->enum('gender', ['Male', 'Female'])->nullable(); // Fixed case
+            $table->enum('gender', ['Male', 'Female'])->nullable();
             $table->string('phone')->nullable();
             $table->string('email')->nullable();
             $table->timestamps();

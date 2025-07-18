@@ -1,0 +1,317 @@
+ន្ទីរពេទ្យ
+K+
+62
+HOSPITAL
+032
+មន្ទីរពេទ្យ ខវី
+KV Hospital
+ពិនិត្យ និងព្យាបាលជំងឺទូទៅ ព្យាបាលជំងឺស្ទះសរសៃឈាមខួរក្បាល និងគ្រោះថ្នាក់ចរាចរណ៍ មជ្ឈមណ្ឌលលាងឈាម
+ឯកទេសបេះដូង វះកាត់ដុំមហារីក និងប្រព័ន្ធប្រសាទ ឆ្លុះក្រពះពោះវៀន ដោយគ្មានការឈឺចាប់ ម៉ាស៊ីនពិនិត្យសុដន់
+អេកូមើលសាច់ថ្លើម ម៉ាស៊ីន អឹម អ អាយ ម៉ាស៊ីន ស៊ី ធី ស្កែន និងមានសេវា ប.ស.ស៕
+in:/Name
+Patient ID
+: SOM PUTHEA
+: PT001851
+Collected Date
+: 17/03/2024 12:54
+In tij/Age
+Lab ID
+Analysis Date
+: 28 Y, 6 M, 11 D
+: LT001217
+: 17/03/2024 12:54
+ភេទ/Gender
+Requested Date
+Requested By
+: Male
+: 17/03/2024 08:25
+: Dr. LEANG Choeu
+LABORATORY REPORT
+BIOCHIMISTRY
+Results
+Unit
+Reference Range
+Flag
+Creatinine, serum
+:
+0.9
+mg/dL
+(0.9
+1.1)
+Urea/BUN
+:
+33
+mg/dL
+(6.0
+40.0 )
+Glucose
+: 104
+mg/dL
+(75-115)
+Cholesterole Total
+: 342
+mg/dL
+(0 - 200)
+Cholesterol-HDL
+Cholesterol-LDL
+Tryglyceride
+:
+45
+mg/dL
+(>60)
+: OUT LINE
+mg/dL
+(0
+150)
+: 1006
+mg/dL
+(0
+150)
+Uric acide
+: 8.8
+mg/dL
+-
+(3.5 6.0)
+H L
+H H
+ENZYMOLOGY
+Results
+Unit
+Reference Range
+Flag
+GGT (Gamm Glutamyl Transferas): 182
+U/L
+( 0 - 55 )
+H
+TRANSAMINASE
+SGPT/ALT
+:
+106
+U/L
+(0 41)
+SGOT/AST
+: 70
+U/L
+(0 - 40)
+H H
+Н
+Validated By:
+2024-03-17 12:56
+Lab Technician:
+سے
+ហុក ម៉េងឆាយ
+2024-03-17 12:56
+អាសយដ្ឋាន: ភូមិទួលវិហារ ឃុំជីរោទ៍ទី២ ស្រុកត្បូងឃុំ ខេត្តត្បូងឃុំ (ចម្ងាយពីស្ពានគីហ្សូណា ៦ គ.ម)
+î₪çîñḥ: 097 840 47 89/012 89 17 45/012 28 60 70
+ន្ទីរពេទ្យ
+HOSPITAL
+032
+មន្ទីរពេទ្យ ខវី
+KV Hospital
+ពិនិត្យ និងព្យាបាលជំងឺទូទៅ ព្យាបាលជំងឺស្ទះសរសៃឈាមខួរក្បាល និងគ្រោះថ្នាក់ចរាចរណ៍ មជ្ឈមណ្ឌលលាងឈាម
+ឯកទេសបេះដូង វះកាត់ដុំមហារីក និងប្រព័ន្ធប្រសាទ ឆ្លុះក្រពះពោះវៀន ដោយគ្មានការឈឺចាប់ ម៉ាស៊ីនពិនិត្យសុដន់
+អេកូមើលសាច់ថ្លើម ម៉ាស៊ីន អឹម អ អាយ ម៉ាស៊ីន ស៊ី ធី ស្កែន និងមានសេវា ប.ស.ស៕
+ឈោ្មះ/Name
+Patient ID
+: SOM PUTHEA
+: PT001851
+អាយុ/Age
+: 28 Y, 6 M, 11 D
+Collected Date
+: 17/03/2024 12:54
+Lab ID
+Analysis Date
+: LT001217
+: 17/03/2024 12:54
+ភេទ/Gender
+Requested Date
+Requested By
+: Male
+: 17/03/2024 08:25
+: Dr. LEANG Choeu
+LABORATORY REPORT
+DRUG URINE
+Results
+Unit
+Reference Range
+Flag
+: NEGATIVE
+: NEGATIVE
+Morphine
+Amphetamine
+Metamphetamine
+: NEGATIVE
+Validated By:
+2024-03-17 12:56
+Lab Technician:
+ហុក ម៉េងឆាយ
+2024-03-17 12:56
+អាសយដ្ឋាន: ភូមិទួលវិហារ ឃុំជីរោទ៍ទី២ ស្រុកត្បូងឃុំ ខេត្តត្បូងឃុំ (ចម្ងាយពីស្ពានគីហ្សូណា ៦ គ.ម)
+លេខទូរស័ព្ទ: 097 840 47 89/ 012 89 17 45/ 012 28 60 70
+ន្ទីរពេទ្យ
+HOSPITAL
+032
+មន្ទីរពេទ្យ ខវី
+KV Hospital
+ពិនិត្យ និងព្យាបាលជំងឺទូទៅ ព្យាបាលជំងឺស្ទះសរសៃឈាមខួរក្បាល និងគ្រោះថ្នាក់ចរាចរណ៍ មជ្ឈមណ្ឌលលាងឈាម
+ឯកទេសបេះដូង វះកាត់ដុំមហារីក និងប្រព័ន្ធប្រសាទ ឆ្លុះក្រពះពោះវៀន ដោយគ្មានការឈឺចាប់ ម៉ាស៊ីនពិនិត្យសុដន់
+អេកូមើលសាច់ថ្លើម ម៉ាស៊ីន អឹម អ អាយ ម៉ាស៊ីន ស៊ី ធី ស្កែន និងមានសេវា ប.ស.ស៕
+ឈោ្មះ/Name
+Patient ID
+: SOM PUTHEA
+: PT001851
+អាយុ/Age
+: 28 Y, 6 M, 11 D
+Collected Date
+: 17/03/2024 12:54
+Lab ID
+Analysis Date
+: LT001217
+: 17/03/2024 12:54
+ភេទ/Gender
+Requested Date
+Requested By
+: Male
+: 17/03/2024 08:25
+: Dr. LEANG Choeu
+LABORATORY REPORT
+HEMATOLOGY
+Results
+Unit
+Reference Range
+Flag
+CBC
+WBC
+: 9.7
+109/L
+(3.5-10.0)
+LYM%
+:
+44.4
+응
+(15.0-50.0)
+MONO%
+:
+7.0
+응
+(2.0-15.0)
+NUE%
+:
+48.6
+응
+(35.0-80.0)
+EOSINO%
+: 14.4
+응
+(11.5-16.5)
+BASO%
+:
+30.8
+응
+(25.0-35.0)
+HGB
+:
+36.8
+g/dL
+(31.0-38.0)
+MCH
+:
+4.67
+pg
+(3.50-5.50)
+MCHC
+:
+83.8
+g/dL
+(75.0-100.0)
+RBC
+:
+39.1
+X1012/L
+(35.0-55.0)
+MCV
+: 239
+f1
+(150-400)
+Validated By:
+2024-03-17 12:56
+Lab Technician:
+ហុក ម៉េងឆាយ
+2024-03-17 12:56
+អាសយដ្ឋាន: ភូមិទួលវិហារ ឃុំជីរោទ៍ទី២ ស្រុកត្បូងឃុំ ខេត្តត្បូងឃុំ (ចម្ងាយពីស្ពានគីហ្សូណា ៦ គ.ម)
+លេខទូរស័ព្ទ: 097 840 47 89/ 012 89 17 45/ 012 28 60 70
+ន្ទីរពេទ្យ
+HOSPITAL
+032
+មន្ទីរពេទ្យ ខវី
+KV Hospital
+ពិនិត្យ និងព្យាបាលជំងឺទូទៅ ព្យាបាលជំងឺស្ទះសរសៃឈាមខួរក្បាល និងគ្រោះថ្នាក់ចរាចរណ៍ មជ្ឈមណ្ឌលលាងឈាម
+ឯកទេសបេះដូង វះកាត់ដុំមហារីក និងប្រព័ន្ធប្រសាទ ឆ្លុះក្រពះពោះវៀន ដោយគ្មានការឈឺចាប់ ម៉ាស៊ីនពិនិត្យសុដន់
+អេកូមើលសាច់ថ្លើម ម៉ាស៊ីន អឹម អ អាយ ម៉ាស៊ីន ស៊ី ធី ស្កែន និងមានសេវា ប.ស.ស៕
+ឈោ្មះ/Name
+Patient ID
+: SOM PUTHEA
+: PT001851
+អាយុ/Age
+: 28 Y, 6 M, 11 D
+Collected Date
+: 17/03/2024 12:54
+Lab ID
+Analysis Date
+: LT001217
+: 17/03/2024 12:54
+ភេទ/Gender
+Requested Date
+Requested By
+: Male
+: 17/03/2024 08:25
+: Dr. LEANG Choeu
+LABORATORY REPORT
+URINE ANALYSIS
+Results
+Unit
+Reference Range
+Flag
+URINE ANALYSIS 11 TEST
+LEU
+: NEGATIVE
+Leu/μL
+NIT
+:
+NEGATIVE
+URO
+:
+0.2
+mg/dL
+PRO
+:
+NEGATIVE
+mg/dL
+PH
+:
+6.0
+BLO
+:
+NEGATIVE
+Ery/μl
+SG
+: 1.010
+KET
+: NEGATIVE
+mg/dL
+BIL
+: NEGATIVE
+mg/dL
+GLU
+: NEGATIVE
+mg/dL
+ASC
+: NEGATIVE
+mg/dL
+Validated By:
+2024-03-17 12:56
+Lab Technician:
+ហុក ម៉េងឆាយ
+2024-03-17 12:56
+អាសយដ្ឋាន: ភូមិទួលវិហារ ឃុំជីរោទ៍ទី២ ស្រុកត្បូងឃុំ ខេត្តត្បូងឃុំ (ចម្ងាយពីស្ពានគីហ្សូណា ៦ គ.ម)
+លេខទូរស័ព្ទ: 097 840 47 89/ 012 89 17 45/ 012 28 60 70

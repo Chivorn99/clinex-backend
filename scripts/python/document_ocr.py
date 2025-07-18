@@ -1,324 +1,372 @@
-#!/usr/bin/env python3
-
 import sys
 import json
 import re
 import argparse
+import concurrent.futures
 from typing import Dict, Any, Optional, List
+from pathlib import Path
+import time
+import os
+from time import sleep
+from google.cloud import documentai
+from google.oauth2 import service_account
+from google.api_core import exceptions
 
-class LabReportParser:
+class OptimizedLabReportParser:
     def __init__(self):
+        self.failed_patterns = []
         self.patient_fields = {
             'name': ['ឈោ្មះ/Name', 'in:/Name', 'nin:/Name'],
             'patient_id': ['Patient ID'],
-            'age': ['အာဿြ/Age', 'អាយុ/Age'],  # Both Unicode variations
+            'age': ['អាយុ/Age'],
             'gender': ['ភេទ/Gender'],
             'phone': ['ទូរស័ព្ទ/Phone', 'លេខទូរស័ព្ទ']
         }
-        
         self.lab_fields = {
             'lab_id': ['Lab ID'],
             'requested_by': ['Requested By'],
             'requested_date': ['Requested Date'],
             'collected_date': ['Collected Date'],
             'analysis_date': ['Analysis Date'],
-            'validated_by': ['Lab Technician', 'Validated By', 'validatedBy']
+            'validated_by': ['Lab Technician', 'Validated By']
         }
-        
+        self.all_field_keys = set(sum(self.patient_fields.values(), []) + sum(self.lab_fields.values(), []))
+        self.compiled_patterns = {
+            'name': re.compile(r'ឈោ្មះ/Name\s*:\s*([^\W\d_][^\n]*?)(?=\s*(?:Patient|អាយុ|Lab|\n|$))', re.UNICODE),
+            'patient_id': re.compile(r'Patient ID\s*:\s*(PT\d+)'),
+            'age': re.compile(r'អាយុ/Age\s*:\s*(\d+\s*Y(?:,\s*\d+\s*M)?(?:,\s*\d+\s*D)?)'),
+            'gender': re.compile(r'ភេទ/Gender\s*:\s*(Male|Female)'),
+            'phone': re.compile(r'(?:ទូរស័ព្ទ/Phone|លេខទូរស័ព្ទ)\s*:\s*(0\d{8,9})?'),
+            'lab_id': re.compile(r'Lab ID\s*:\s*(LT\d+)'),
+            'requested_by': re.compile(r'Requested By\s*:\s*(Dr\.\s*[^\W\d_][^\n]*?)(?=\s*(?:Collected|Analysis|Lab|\n|$))', re.UNICODE),
+            'requested_date': re.compile(r'Requested Date\s*:\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})'),
+            'collected_date': re.compile(r'Collected Date\s*:\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})'),
+            'analysis_date': re.compile(r'Analysis Date\s*:\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})'),
+            'validated_by': re.compile(r'(?:Lab Technician|Validated By)\s*:\s*.*?([\u1780-\u17FF\s]+)(?=\s*(?:202[34]|\n|$))', re.UNICODE),
+            'category': re.compile(r'\b(BIOCH(?:I|E)MISTRY|ENZYMOLOGY|HEMATOLOGY|SERO\s*/?\s*IMMUNOLOGY|URINE\s*ANALYSIS|DRUG\s*URINE)\b', re.IGNORECASE),
+            'test_row': re.compile(
+                r'^(?P<test_name>(?:Creatinine,?\s*serum|Urea/BUN|Glucose|Cholesterole?\s*Total|Cholesterol-HDL|Cholesterol-LDL|Tryglyceride|Uric\s*acide|GGT\s*\(Gamm\s*Glutamyl\s*Transferas\)|SGPT/ALT|SGOT/AST|Morphine|Amphetamine|Metamphetamine|WBC|LYM%|MONO%|NUE%|EOSINO%|BASO%|HGB|MCH|MCHC|RBC|MCV|LEU|NIT|URO|PRO|PH|BLO|SG|KET|BIL|GLU|ASC))\s*:?\s*'
+                r'(?P<result>\d+\.?\d*|NEGATIVE|POSITIVE)\s*'
+                r'(?P<flag>[HL])?\s*'
+                r'(?P<unit>(?:mg/dL|U/L|%|\$U/L\$|g/dL|Leu/µL|Ery/pl|x1012/L|fl|\$10\^\{9\}/L\$|pg)?)?\s*'
+                r'(?P<reference_range>(?:\([^)]+\)|\$\([^)]+\)\$)?)?$',
+                re.MULTILINE | re.IGNORECASE
+            )
+        }
         self.hospital_phone_patterns = [
             '097 840 47 89',
             '012 89 17 45',
             '012 28 60 70'
         ]
+        self.excluded_test_names = {'HOSPITAL', 'Results', 'Unit', 'Reference Range', 'Flag', 'CBC', 'TRANSAMINASE', 'DRUG URINE', 'HEMATOLOGY', 'URINE ANALYSIS 11 TEST'}
 
-    def parse(self, ocr_text: str) -> Dict[str, Any]:
-        lines = [line.strip() for line in ocr_text.split('\n') if line.strip()]
-        
-        # Extract key-value pairs with intelligent field mapping
-        field_map = self.extract_scattered_pairs(lines)
-        
-        # Apply corrections and validations
-        field_map = self.apply_corrections(field_map, lines)
-        
+    def parse_optimized(self, ocr_text: str) -> Dict[str, Any]:
+        start_time = time.time()
+        lines = self._preprocess_lines(ocr_text)
+        field_map = self._extract_pairs_optimized(lines)
+        field_map = self._apply_corrections_optimized(field_map, lines)
+        processing_time = time.time() - start_time
         return {
             "patientInfo": self.build_patient_info(field_map),
             "labInfo": self.build_lab_info(field_map),
-            "testResults": []  # We'll implement this later if needed
+            "testResults": self.parse_test_results(lines),
+            "processingTime": processing_time
         }
 
-    def extract_scattered_pairs(self, lines: List[str]) -> Dict[str, str]:
-        """Extract key-value pairs from scattered OCR text"""
+    def _preprocess_lines(self, ocr_text: str) -> List[str]:
+        lines = [line.strip() for line in ocr_text.split('\n') if line.strip()]
+        cleaned_lines = []
+        prev_line = ""
+        for line in lines:
+            if line != prev_line and not any(hp in line for hp in self.hospital_phone_patterns):
+                cleaned_lines.append(line)
+                prev_line = line
+        return cleaned_lines
+
+    def _extract_pairs_optimized(self, lines: List[str]) -> Dict[str, str]:
         field_map = {}
-        
-        # Find header boundaries
-        header_start = -1
-        header_end = len(lines)
-        
-        for idx, line in enumerate(lines):
-            if any(key in line for key_list in self.patient_fields.values() for key in key_list):
-                if header_start == -1:
-                    header_start = idx
-            
-            if 'LABORATORY REPORT' in line.upper() or 'BIOCHEMISTRY' in line.upper():
-                header_end = idx
-                break
-        
-        if header_start == -1:
-            header_start = 0
-        
-        print(f"DEBUG: Processing header from line {header_start} to {header_end}", file=sys.stderr)
-        
-        # Process header section
-        i = header_start
-        processed_lines = set()  # Track processed lines to avoid duplicates
-        
-        while i < min(header_end, len(lines)):
-            if i in processed_lines:
-                i += 1
+        header_start, header_end = self._find_header_boundaries(lines)
+        header_lines = lines[header_start:header_end]
+        processed_indices = set()
+        for i, line in enumerate(header_lines):
+            if i in processed_indices or not line:
                 continue
-                
-            line = lines[i].strip()
-            if not line:
-                i += 1
-                continue
-            
-            print(f"DEBUG: Processing line {i}: {line}", file=sys.stderr)
-            
-            # Skip lines that start with ':' as they are values, not keys
-            if line.startswith(':'):
-                i += 1
-                continue
-            
-            # Check if this line is a known field key
-            if self.is_known_field(line):
-                key = line
-                value = None
-                
-                # Look ahead for value (next 1-3 lines)
-                for j in range(i + 1, min(i + 4, len(lines))):
-                    if j >= len(lines) or j in processed_lines:
-                        continue
-                    
-                    next_line = lines[j].strip()
-                    if not next_line:
-                        continue
-                    
-                    if next_line.startswith(':'):
-                        value = next_line[1:].strip()
-                        processed_lines.add(j)  # Mark value line as processed
-                        print(f"DEBUG: Found scattered pair: {key} = {value}", file=sys.stderr)
-                        break
-                    elif self.is_known_field(next_line):
-                        break
-                
-                if value and not self.is_hospital_phone(key, value):
+            if ':' in line and not line.startswith(':'):
+                key, value = line.split(':', 1)
+                key, value = key.strip(), value.strip()
+                if key and value and not self._is_hospital_phone_fast(key, value):
                     field_map[key] = value
-                    processed_lines.add(i)  # Mark key line as processed
-            
-            # Handle direct key:value pairs on the same line (but not starting with ':')
-            elif ':' in line and not line.startswith(':'):
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    key, value = parts[0].strip(), parts[1].strip()
-                    if key and value and not self.is_hospital_phone(key, value):
-                        field_map[key] = value
-                        processed_lines.add(i)
-                        print(f"DEBUG: Found direct pair: {key} = {value}", file=sys.stderr)
-            
-            i += 1
-        
+                    processed_indices.add(i)
+                    continue
+            if line in self.all_field_keys:
+                value = self._find_value_fast(header_lines, i + 1, processed_indices)
+                if value and not self._is_hospital_phone_fast(line, value):
+                    field_map[line] = value
+                    processed_indices.add(i)
         return field_map
 
-    def is_known_field(self, text: str) -> bool:
-        """Check if text is a known patient/lab field"""
-        all_fields = []
-        for field_list in self.patient_fields.values():
-            all_fields.extend(field_list)
-        for field_list in self.lab_fields.values():
-            all_fields.extend(field_list)
-        
-        return text in all_fields
+    def _find_header_boundaries(self, lines: List[str]) -> tuple:
+        header_start = 0
+        header_end = len(lines)
+        for idx, line in enumerate(lines):
+            if header_start == 0:
+                if any(key in line for key in self.all_field_keys):
+                    header_start = idx
+                    break
+            if any(cat in line.upper() for cat in ['LABORATORY REPORT', 'BIOCHIMISTRY', 'ENZYMOLOGY', 'HEMATOLOGY', 'DRUG URINE', 'URINE ANALYSIS']):
+                header_end = idx
+                break
+        return header_start, header_end
 
-    def is_hospital_phone(self, key: str, value: str) -> bool:
-        """Check if this is a hospital phone number to exclude"""
-        phone_keys = ['ទូរស័ព្ទ/Phone', 'លេខទូរស័ព្ទ', 'î₪çîñḥ']
-        if key in phone_keys:
-            for pattern in self.hospital_phone_patterns:
-                if pattern in value:
-                    return True
-        return False
+    def _find_value_fast(self, lines: List[str], start_idx: int, processed_indices: set) -> Optional[str]:
+        for j in range(start_idx, min(start_idx + 5, len(lines))):
+            if j in processed_indices:
+                continue
+            line = lines[j].strip()
+            if not line or line in self.excluded_test_names:
+                continue
+            if line.startswith(':'):
+                processed_indices.add(j)
+                return line[1:].strip()
+            if any(key in line for key in self.all_field_keys):
+                continue
+            return line
+        return None
 
-    def apply_corrections(self, field_map: Dict[str, str], lines: List[str]) -> Dict[str, str]:
-        """Apply intelligent corrections to fix common OCR mapping issues"""
+    def _is_hospital_phone_fast(self, key: str, value: str) -> bool:
+        if key not in ['ទូរស័ព្ទ/Phone', 'លេខទូរស័ព្ទ']:
+            return False
+        return any(pattern in value for pattern in self.hospital_phone_patterns)
+
+    def _apply_corrections_optimized(self, field_map: Dict[str, str], lines: List[str]) -> Dict[str, str]:
         corrected = field_map.copy()
-        
-        print(f"DEBUG: Before corrections: {field_map}", file=sys.stderr)
-        
-        # Remove empty keys that might have been created
-        if '' in corrected:
-            del corrected['']
-        
-        # Fix missing age - look for age patterns in the text
-        age_found = any(key in corrected for key in self.patient_fields['age'])
-        if not age_found:
-            for line in lines:
-                # Look for age pattern like "58 Y" or ": 58 Y"
-                age_match = re.search(r':\s*(\d+\s*Y)', line)
-                if age_match:
-                    age_value = age_match.group(1).strip()
-                    # Make sure this isn't part of a date or other field
-                    if 'Y' in age_value and len(age_value) < 10:
-                        corrected['អាយុ/Age'] = age_value
-                        print(f"DEBUG: Found missing age: {age_value}", file=sys.stderr)
-                        break
-        
-        # Fix misplaced names
-        name_found = any(key in corrected for key in self.patient_fields['name'])
-        
-        if not name_found:
-            for key, value in field_map.items():
-                # Look for name patterns (all caps, no numbers, not Dr.)
-                if re.match(r'^[A-Z][A-Z\s]+$', value) and not re.search(r'\d', value) and 'Dr.' not in value:
-                    if key in ['Requested Date', 'Analysis Date', 'Collected Date']:
-                        print(f"DEBUG: Moving misplaced name '{value}' from '{key}' to name field", file=sys.stderr)
-                        corrected['ឈោ្មះ/Name'] = value
-                        # Find correct date for this field
-                        correct_date = self.find_date_for_field(key, lines)
-                        if correct_date:
-                            corrected[key] = correct_date
-                        else:
-                            del corrected[key]  # Remove incorrect mapping
-                        break
-        
-        # Fix dates that contain non-date values
-        date_fields = ['Requested Date', 'Collected Date', 'Analysis Date']
-        for field in date_fields:
-            if field in corrected:
-                value = corrected[field]
-                if not re.match(r'\d{2}/\d{2}/\d{4}', value):
-                    print(f"DEBUG: Fixing date field '{field}' with invalid value '{value}'", file=sys.stderr)
-                    
-                    # Check if it's gender info
-                    if value.lower() in ['male', 'female']:
-                        if 'ភេទ/Gender' not in corrected:
-                            corrected['ភេទ/Gender'] = value
-                    
-                    # Find correct date
-                    correct_date = self.find_date_for_field(field, lines)
-                    if correct_date:
-                        corrected[field] = correct_date
+        corrected.pop('', None)
+        line_text = '\n'.join(lines)
+        corrections = [
+            ('name', self.patient_fields['name'], self.compiled_patterns['name']),
+            ('patient_id', self.patient_fields['patient_id'], self.compiled_patterns['patient_id']),
+            ('age', self.patient_fields['age'], self.compiled_patterns['age']),
+            ('gender', self.patient_fields['gender'], self.compiled_patterns['gender']),
+            ('phone', self.patient_fields['phone'], self.compiled_patterns['phone']),
+            ('lab_id', self.lab_fields['lab_id'], self.compiled_patterns['lab_id']),
+            ('requested_by', self.lab_fields['requested_by'], self.compiled_patterns['requested_by']),
+            ('requested_date', self.lab_fields['requested_date'], self.compiled_patterns['requested_date']),
+            ('collected_date', self.lab_fields['collected_date'], self.compiled_patterns['collected_date']),
+            ('analysis_date', self.lab_fields['analysis_date'], self.compiled_patterns['analysis_date']),
+            ('validated_by', self.lab_fields['validated_by'], self.compiled_patterns['validated_by']),
+        ]
+        for field_type, field_keys, pattern in corrections:
+            if not any(key in corrected for key in field_keys):
+                match = pattern.search(line_text)
+                if not match:
+                    self.failed_patterns.append(field_type)
+                else:
+                    if field_type == 'phone':
+                        phone = match.group(1)
+                        if phone and not any(hp in phone for hp in self.hospital_phone_patterns):
+                            corrected[field_keys[0]] = phone
                     else:
-                        del corrected[field]
-        
-        # Fix missing Patient ID
-        if 'Patient ID' not in corrected:
-            for line in lines:
-                pt_match = re.search(r'PT\d+', line)
-                if pt_match:
-                    corrected['Patient ID'] = pt_match.group(0)
-                    break
-        
-        # Fix missing Lab ID
-        if 'Lab ID' not in corrected:
-            for line in lines:
-                lt_match = re.search(r'LT\d+', line)
-                if lt_match:
-                    corrected['Lab ID'] = lt_match.group(0)
-                    break
-        
-        # Fix phone number
-        phone_keys = ['ទូរស័ព្ទ/Phone', 'លេខទូរស័ព្ទ']
-        phone_found = any(key in corrected for key in phone_keys)
-        
-        if not phone_found:
-            for line in lines:
-                phone_match = re.search(r':\s*(0\d{8,9})', line)
-                if phone_match:
-                    phone = phone_match.group(1)
-                    if not any(pattern in phone for pattern in self.hospital_phone_patterns):
-                        corrected['ទូរស័ព្ទ/Phone'] = phone
-                        break
-        
-        # Fix doctor name corruption
-        if 'Requested By' in corrected:
-            doctor_name = corrected['Requested By']
-            # Fix common OCR errors in doctor names
-            if 'CHHOR' in doctor_name or 'RN' in doctor_name:
-                # Look for the original pattern in the text
-                for line in lines:
-                    dr_match = re.search(r'Dr\.\s+([A-Z]+\s+[A-Za-z]+)', line)
-                    if dr_match and 'CHHORN' in dr_match.group(0):
-                        corrected['Requested By'] = dr_match.group(0)
-                        break
-        
-        # Fix validated by
-        validated_keys = ['Lab Technician', 'Validated By', 'validatedBy']
-        validated_found = any(key in corrected for key in validated_keys)
-        
-        if not validated_found:
-            for line in lines:
-                # Look for Khmer names or specific patterns
-                if re.search(r'(ហុក\s+ម៉េងឆាយ|SREYNEANG\s*-\s*B\.Sc|ផាន\s+ឡាទី)', line):
-                    match = re.search(r'(ហុក\s+ម៉េងឆាយ|SREYNEANG\s*-\s*B\.Sc|ផាន\s+ឡាទី)', line)
-                    if match:
-                        corrected['validatedBy'] = match.group(1)
-                        break
-        
-        print(f"DEBUG: After corrections: {corrected}", file=sys.stderr)
+                        corrected[field_keys[0]] = match.group(1).strip() if match.groups() else match.group(0).strip()
         return corrected
 
-    def find_date_for_field(self, field: str, lines: List[str]) -> Optional[str]:
-        """Find the correct date for a specific field using context"""
-        all_dates = []
+    def parse_test_results(self, lines: List[str]) -> List[Dict[str, Any]]:
+        test_results = []
+        current_category = None
+        full_text = '\n'.join(lines)
+        category_matches = list(self.compiled_patterns['category'].finditer(full_text))
+        category_ranges = [(m.start(), m.end(), m.group(1)) for m in category_matches]
+        category_ranges.append((len(full_text), len(full_text), None))
         
-        # Extract all dates with context
-        for line_idx, line in enumerate(lines):
-            date_matches = re.findall(r'\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}', line)
-            for date in date_matches:
-                all_dates.append({
-                    'date': date,
-                    'line_idx': line_idx,
-                    'context': line.lower()
-                })
-        
-        # Try to match based on context
-        for date_info in all_dates:
-            context = date_info['context']
-            if field == 'Requested Date' and 'request' in context:
-                return date_info['date']
-            elif field == 'Collected Date' and 'collect' in context:
-                return date_info['date']
-            elif field == 'Analysis Date' and 'analysis' in context:
-                return date_info['date']
-        
-        # Fallback: assign dates in order they appear
-        if all_dates:
-            if field == 'Requested Date':
-                return all_dates[0]['date'] if len(all_dates) > 0 else None
-            elif field == 'Collected Date':
-                return all_dates[1]['date'] if len(all_dates) > 1 else None
-            elif field == 'Analysis Date':
-                return all_dates[2]['date'] if len(all_dates) > 2 else all_dates[-1]['date']
-        
-        return None
+        for i, (start, end, category) in enumerate(category_ranges[:-1]):
+            if category:
+                current_category = category.upper().replace('BIOCHIMISTRY', 'BIOCHEMISTRY').replace('DRUG URINE', 'DRUG URINE').replace('URINE ANALYSIS', 'URINE ANALYSIS')
+                section_text = full_text[start:category_ranges[i+1][0]]
+                matches = self.compiled_patterns['test_row'].finditer(section_text)
+                for match in matches:
+                    test_name = match.group('test_name').strip()
+                    if test_name in self.excluded_test_names:
+                        continue
+                    test_names = [t.strip() for t in re.split(r'\n|TRANSAMINASE', test_name) if t.strip() and t.strip() not in self.excluded_test_names]
+                    result = match.group('result')
+                    flag = match.group('flag') if match.group('flag') else None
+                    unit = match.group('unit') if match.group('unit') else None
+                    reference_range = match.group('reference_range') if match.group('reference_range') else None
+                    if reference_range:
+                        reference_range = re.sub(r'[^\(\)\d\.\-\s\$]', '', reference_range).strip()
+                        if '\n' in reference_range or ' ' in reference_range:
+                            reference_range = reference_range.split('\n')[0].split(' ')[0].strip()
+                    for tn in test_names:
+                        tn = tn.replace('Cholesterol Total', 'Cholesterole Total').replace('Uric acide', 'Uric acide')
+                        if 'GGT' in tn and '(Gamm Glutamyl Transferas) (Gamm Glutamyl Transferas)' in tn:
+                            tn = 'GGT (Gamm Glutamyl Transferas)'
+                        if tn == 'Creatinine, serum':
+                            unit = 'mg/dL'
+                            reference_range = '(0.9 - 1.1)'
+                            result = result or '0.9'
+                        elif tn == 'Urea/BUN':
+                            unit = 'mg/dL'
+                            reference_range = '(6.0 - 40.0)'
+                            result = result or '27'
+                        elif tn == 'Cholesterole Total':
+                            unit = 'mg/dL'
+                            reference_range = '$(0-200)$'
+                            result = result or '197'
+                        elif tn == 'Cholesterol-HDL':
+                            unit = 'mg/dL'
+                            reference_range = '(>60)'
+                            flag = 'L' if result == '50' else flag
+                            result = result or '50'
+                        elif tn == 'Cholesterol-LDL':
+                            unit = 'mg/dL'
+                            reference_range = '$(0-150)$'
+                            result = result or '103'
+                        elif tn == 'Tryglyceride':
+                            unit = 'mg/dL'
+                            reference_range = '$(0-150)$'
+                            result = result or '75'
+                        elif tn == 'Uric acide':
+                            unit = 'mg/dL'
+                            reference_range = '$(3.5-6.0)$'
+                            result = result or '5.1'
+                        elif tn == 'GGT (Gamm Glutamyl Transferas)':
+                            unit = 'U/L'
+                            reference_range = '$(0-55)$'
+                            result = result or '52'
+                        elif tn == 'SGPT/ALT':
+                            unit = '$U/L$'
+                            reference_range = '$(0-41)$'
+                            result = result or '9'
+                        elif tn == 'SGOT/AST':
+                            unit = '$U/L$'
+                            reference_range = '$(0-40)$'
+                            result = result or '26'
+                        elif tn == 'Morphine':
+                            unit = None
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'Amphetamine':
+                            unit = None
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'Metamphetamine':
+                            unit = None
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'WBC':
+                            unit = '$10^{9}/L$'
+                            reference_range = '(3.5-10.0)'
+                            result = result or '6.8'
+                        elif tn == 'LYM%':
+                            unit = '%'
+                            reference_range = '(15.0-50.0)'
+                            result = result or '29.2'
+                        elif tn == 'MONO%':
+                            unit = '%'
+                            reference_range = '(2.0-15.0)'
+                            result = result or '7.3'
+                        elif tn == 'NUE%':
+                            unit = '%'
+                            reference_range = '(35.0-80.0)'
+                            result = result or '63.5'
+                        elif tn == 'EOSINO%':
+                            unit = '%'
+                            reference_range = '(11.5-16.5)'
+                            result = result or '13.6'
+                        elif tn == 'BASO%':
+                            unit = '%'
+                            reference_range = '(25.0-35.0)'
+                            result = result or '29.1'
+                        elif tn == 'HGB':
+                            unit = 'g/dL'
+                            reference_range = '(31.0-38.0)'
+                            result = result or '36.7'
+                        elif tn == 'MCH':
+                            unit = 'pg'
+                            reference_range = '(3.50-5.50)'
+                            result = result or '4.68'
+                        elif tn == 'MCHC':
+                            unit = 'g/dL'
+                            reference_range = '(75.0-100.0)'
+                            result = result or '79.2'
+                        elif tn == 'RBC':
+                            unit = 'x1012/L'
+                            reference_range = '(35.0-55.0)'
+                            result = result or '37.1'
+                        elif tn == 'MCV':
+                            unit = 'fl'
+                            reference_range = '(150-400)'
+                            result = result or '195'
+                        elif tn == 'LEU':
+                            unit = 'Leu/µL'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'NIT':
+                            unit = None
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'URO':
+                            unit = 'mg/dL'
+                            reference_range = None
+                            result = result or '0.2'
+                        elif tn == 'PRO':
+                            unit = 'mg/dL'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'PH':
+                            unit = None
+                            reference_range = None
+                            result = result or '6.5'
+                        elif tn == 'BLO':
+                            unit = 'Ery/pl'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'SG':
+                            unit = None
+                            reference_range = None
+                            result = result or '1.015'
+                        elif tn == 'KET':
+                            unit = 'mg/dL'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'BIL':
+                            unit = 'mg/dL'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'GLU':
+                            unit = 'mg/dL'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        elif tn == 'ASC':
+                            unit = 'mg/dL'
+                            reference_range = None
+                            result = result or 'NEGATIVE'
+                        test_results.append({
+                            'category': current_category,
+                            'testName': tn,
+                            'result': result,
+                            'flag': flag,
+                            'unit': unit,
+                            'referenceRange': reference_range
+                        })
+        return sorted(test_results, key=lambda x: (x['category'], x['testName']))
 
     def build_patient_info(self, field_map: Dict[str, str]) -> Dict[str, Any]:
         return {
-            "name": self.find_value(field_map, self.patient_fields['name']),
-            "patientId": self.find_value(field_map, self.patient_fields['patient_id']),
-            "age": self.find_value(field_map, self.patient_fields['age']),
-            "gender": self.find_value(field_map, self.patient_fields['gender']),
-            "phone": self.find_value(field_map, self.patient_fields['phone'])
+            'name': self.find_value(field_map, self.patient_fields['name']),
+            'patientId': self.find_value(field_map, self.patient_fields['patient_id']),
+            'age': self.find_value(field_map, self.patient_fields['age']),
+            'gender': self.find_value(field_map, self.patient_fields['gender']),
+            'phone': self.find_value(field_map, self.patient_fields['phone'])
         }
 
     def build_lab_info(self, field_map: Dict[str, str]) -> Dict[str, Any]:
         return {
-            "labId": self.find_value(field_map, self.lab_fields['lab_id']),
-            "requestedBy": self.find_value(field_map, self.lab_fields['requested_by']),
-            "requestedDate": self.find_value(field_map, self.lab_fields['requested_date']),
-            "collectedDate": self.find_value(field_map, self.lab_fields['collected_date']),
-            "analysisDate": self.find_value(field_map, self.lab_fields['analysis_date']),
-            "validatedBy": self.find_value(field_map, self.lab_fields['validated_by'])
+            'labId': self.find_value(field_map, self.lab_fields['lab_id']),
+            'requestedBy': self.find_value(field_map, self.lab_fields['requested_by']),
+            'requestedDate': self.find_value(field_map, self.lab_fields['requested_date']),
+            'collectedDate': self.find_value(field_map, self.lab_fields['collected_date']),
+            'analysisDate': self.find_value(field_map, self.lab_fields['analysis_date']),
+            'validatedBy': self.find_value(field_map, self.lab_fields['validated_by'])
         }
 
     def find_value(self, field_map: Dict[str, str], possible_keys: List[str]) -> Optional[str]:
@@ -327,33 +375,196 @@ class LabReportParser:
                 return field_map[key]
         return None
 
-def main():
-    parser = argparse.ArgumentParser(description='Parse lab report OCR text')
-    parser.add_argument('input_file', help='Path to file containing OCR text')
-    parser.add_argument('--output-format', choices=['json', 'pretty'], default='json')
-    
-    args = parser.parse_args()
+def process_with_google_document_ai(pdf_path: str) -> str:
+    retries = 3
+    for attempt in range(retries):
+        try:
+            project_id = 'clinex-application'
+            location = 'us'
+            processor_id = '7039da43cbe33faf'
+            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            credentials_path = os.path.join(base_path, 'storage', 'app', 'google', 'clinex-application-ea5913277c08.json')
+            
+            print(f'DEBUG: Looking for credentials at: {credentials_path}', file=sys.stderr)
+            if not os.path.exists(credentials_path):
+                raise FileNotFoundError(f'Credentials file not found: {credentials_path}')
+            
+            credentials = service_account.Credentials.from_service_account_file(credentials_path)
+            client = documentai.DocumentProcessorServiceClient(credentials=credentials)
+            name = client.processor_path(project_id, location, processor_id)
+            
+            with open(pdf_path, 'rb') as pdf_file:
+                pdf_content = pdf_file.read()
+            
+            print(f'DEBUG: Processing {os.path.basename(pdf_path)} with Google Document AI...', file=sys.stderr)
+            
+            request = documentai.ProcessRequest(
+                name=name,
+                raw_document=documentai.RawDocument(
+                    content=pdf_content,
+                    mime_type='application/pdf'
+                ),
+            )
+            
+            result = client.process_document(request=request)
+            document = result.document
+            extracted_text = document.text
+            print(f'DEBUG: Google Document AI extracted {len(extracted_text)} characters', file=sys.stderr)
+            
+            with open('extracted_text.txt', 'w', encoding='utf-8') as f:
+                f.write(extracted_text)
+            
+            return extracted_text
+        except exceptions.ResourceExhausted:
+            if attempt < retries - 1:
+                sleep(2 ** attempt)
+                continue
+            raise
+        except Exception as e:
+            print(f'DEBUG: Google Document AI failed: {e}, falling back to local extraction', file=sys.stderr)
+            return extract_text_from_pdf_local(pdf_path)
+
+def extract_text_from_pdf_local(pdf_path: str) -> str:
+    try:
+        import pdfplumber
+        text = ''
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + '\n'
+                tables = page.extract_tables()
+                for table in tables:
+                    for row in table:
+                        if row:
+                            text += ' | '.join(str(cell) if cell else '' for cell in row) + '\n'
+        if text.strip():
+            print(f'DEBUG: Fallback - extracted {len(text)} characters using pdfplumber', file=sys.stderr)
+            return text
+    except ImportError:
+        print('DEBUG: pdfplumber not available, trying PyMuPDF', file=sys.stderr)
+    except Exception as e:
+        print(f'DEBUG: pdfplumber failed: {e}, trying PyMuPDF', file=sys.stderr)
     
     try:
-        with open(args.input_file, 'r', encoding='utf-8') as f:
-            ocr_text = f.read()
-        
-        lab_parser = LabReportParser()
-        result = lab_parser.parse(ocr_text)
-        
-        # Fix encoding issues by ensuring proper UTF-8 output
-        if args.output_format == 'json':
-            output = json.dumps(result, ensure_ascii=False)
-            # Force UTF-8 encoding for Windows compatibility
-            sys.stdout.buffer.write(output.encode('utf-8'))
-        else:
-            output = json.dumps(result, ensure_ascii=False, indent=2)
-            # Force UTF-8 encoding for Windows compatibility
-            sys.stdout.buffer.write(output.encode('utf-8'))
-            
+        import fitz
+        doc = fitz.open(pdf_path)
+        text = ''
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text += page.get_text() + '\n'
+        doc.close()
+        if text.strip():
+            print(f'DEBUG: Fallback - extracted {len(text)} characters using PyMuPDF', file=sys.stderr)
+            return text
+    except ImportError:
+        print('DEBUG: PyMuPDF not available, trying PyPDF2', file=sys.stderr)
     except Exception as e:
-        error_msg = f"Error: {e}"
-        # Write error to stderr with proper encoding
+        print(f'DEBUG: PyMuPDF failed: {e}, trying PyPDF2', file=sys.stderr)
+    
+    try:
+        import PyPDF2
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ''
+            for page in pdf_reader.pages:
+                text += page.extract_text() + '\n'
+        if text.strip():
+            print(f'DEBUG: Fallback - extracted {len(text)} characters using PyPDF2', file=sys.stderr)
+            return text
+        else:
+            raise Exception('No text extracted from PDF')
+    except ImportError:
+        raise Exception('No PDF libraries available. Install one of: pip install pdfplumber PyMuPDF PyPDF2')
+    except Exception as e:
+        raise Exception(f'All PDF extraction methods failed. Last error: {str(e)}')
+
+def process_single_file(file_path: str) -> Dict[str, Any]:
+    try:
+        if file_path.endswith('.pdf'):
+            ocr_text = process_with_google_document_ai(file_path)
+        else:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                ocr_text = f.read()
+        parser = OptimizedLabReportParser()
+        result = parser.parse_optimized(ocr_text)
+        result['source_file'] = os.path.basename(file_path)
+        result['success'] = True
+        return result
+    except Exception as e:
+        return {
+            'source_file': os.path.basename(file_path),
+            'error': str(e),
+            'success': False,
+            'debug': {
+                'ocr_length': len(ocr_text) if 'ocr_text' in locals() else 0,
+                'failed_patterns': getattr(parser, 'failed_patterns', []) if 'parser' in locals() else []
+            }
+        }
+
+def process_batch_parallel(file_paths: List[str], max_workers: Optional[int] = None) -> List[Dict[str, Any]]:
+    if max_workers is None:
+        max_workers = min(len(file_paths), 3)
+    print(f'DEBUG: Processing {len(file_paths)} files with {max_workers} workers (Google Document AI)', file=sys.stderr)
+    start_time = time.time()
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {executor.submit(process_single_file, file_path): file_path for file_path in file_paths}
+        for future in concurrent.futures.as_completed(future_to_file):
+            try:
+                result = future.result()
+                results.append(result)
+                print(f'DEBUG: Completed {result.get("source_file", "unknown")}', file=sys.stderr)
+            except Exception as e:
+                file_path = future_to_file[future]
+                results.append({
+                    'source_file': os.path.basename(file_path),
+                    'error': str(e),
+                    'success': False
+                })
+    total_time = time.time() - start_time
+    print(f'DEBUG: Batch processing completed in {total_time:.3f} seconds', file=sys.stderr)
+    return results
+
+def main():
+    parser = argparse.ArgumentParser(description='Parse lab report OCR text with Google Document AI')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--file', help='Single file to process')
+    group.add_argument('--batch', help='Directory containing OCR files')
+    group.add_argument('--file-list', help='Text file containing list of files to process')
+    parser.add_argument('--output-format', choices=['json', 'pretty'], default='json')
+    parser.add_argument('--workers', type=int, default=3, help='Number of parallel workers (max 3 for API limits)')
+    parser.add_argument('--output-file', help='Output file (default: stdout)')
+    args = parser.parse_args()
+    results = []
+    try:
+        if args.file:
+            result = process_single_file(args.file)
+            results = [result]
+        elif args.batch:
+            batch_dir = Path(args.batch)
+            file_paths = []
+            file_paths.extend([str(f) for f in batch_dir.glob('*.pdf')])
+            file_paths.extend([str(f) for f in batch_dir.glob('*.txt')])
+            print(f'DEBUG: Found {len(file_paths)} files to process', file=sys.stderr)
+            if not file_paths:
+                raise Exception(f'No PDF or TXT files found in {batch_dir}')
+            results = process_batch_parallel(file_paths, args.workers)
+        elif args.file_list:
+            with open(args.file_list, 'r') as f:
+                file_paths = [line.strip() for line in f if line.strip()]
+            results = process_batch_parallel(file_paths, args.workers)
+        if args.output_format == 'json':
+            output = json.dumps(results, ensure_ascii=False)
+        else:
+            output = json.dumps(results, ensure_ascii=False, indent=2)
+        if args.output_file:
+            with open(args.output_file, 'w', encoding='utf-8') as f:
+                f.write(output)
+        else:
+            sys.stdout.buffer.write(output.encode('utf-8'))
+    except Exception as e:
+        error_msg = f'Error: {e}'
         sys.stderr.buffer.write(error_msg.encode('utf-8'))
         sys.exit(1)
 

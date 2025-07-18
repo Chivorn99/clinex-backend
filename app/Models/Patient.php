@@ -15,10 +15,7 @@ class Patient extends Model
         'age',
         'gender',
         'phone',
-    ];
-
-    protected $casts = [
-        'gender' => 'string',
+        'email',
     ];
 
     public function labReports()

@@ -12,9 +12,12 @@ class ExtractedData extends Model
 
     protected $fillable = [
         'lab_report_id',
-        'section',
-        'field_name',
-        'value',
+        'category',     
+        'test_name',      
+        'result',         
+        'unit',          
+        'reference',       
+        'flag',          
         'coordinates',
         'confidence_score',
         'is_verified',

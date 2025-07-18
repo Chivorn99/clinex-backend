@@ -9,7 +9,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Symfony\Component\Process\Exception\ProcessFailedException;
+use Symfony\Component\Process\Process;
 
 class ReportBatchController extends Controller
 {
@@ -19,19 +22,16 @@ class ReportBatchController extends Controller
     public function index(Request $request)
     {
         $query = ReportBatch::with(['uploader', 'labReports'])
-                            ->withCount('labReports');
+            ->withCount('labReports');
 
-        // Filter by status
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
-        // Filter by uploader
         if ($request->filled('uploaded_by')) {
             $query->where('uploaded_by', $request->uploaded_by);
         }
 
-        // Search by name
         if ($request->filled('search')) {
             $query->where('name', 'like', '%' . $request->search . '%');
         }
@@ -55,11 +55,9 @@ class ReportBatchController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string|max:1000',
-            'files' => 'required|array|min:1|max:50', // Max 50 files per batch
-            'files.*' => 'required|file|mimes:pdf|max:10240', // 10MB per file
-            'auto_process' => 'boolean',
+            'files' => 'required|array|min:1|max:20', 
+            'files.*' => 'required|file|mimes:pdf|max:10240',
+            'auto_process' => 'nullable|in:true,false,1,0',
         ]);
 
         if ($validator->fails()) {
@@ -76,10 +74,13 @@ class ReportBatchController extends Controller
         DB::beginTransaction();
 
         try {
-            // Create the batch
+            // Generate auto-incrementing batch name for today
+            $batchName = $this->generateBatchName();
+
+            // Create batch record
             $batch = ReportBatch::create([
-                'name' => $request->name,
-                'description' => $request->description,
+                'name' => $batchName,
+                'description' => null, // Remove description
                 'uploaded_by' => auth()->id(),
                 'total_reports' => count($request->file('files')),
                 'processed_reports' => 0,
@@ -91,12 +92,16 @@ class ReportBatchController extends Controller
             $uploadedFiles = [];
             $batchFolder = 'lab_reports/batch_' . $batch->id;
 
-            // Upload each file
+            // Create batch directory
+            Storage::disk('private')->makeDirectory($batchFolder);
+
+            // Upload files and create lab report records
             foreach ($request->file('files') as $index => $file) {
                 $originalName = $file->getClientOriginalName();
-                $storedName = time() . '_' . $index . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.pdf';
+                $timestamp = time() + $index; // Ensure unique timestamps
+                $storedName = $timestamp . '_' . Str::random(8) . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.pdf';
                 $storagePath = $batchFolder . '/' . $storedName;
-                
+
                 // Store file
                 Storage::disk('private')->putFileAs($batchFolder, $file, $storedName);
 
@@ -111,6 +116,7 @@ class ReportBatchController extends Controller
                     'mime_type' => $file->getMimeType(),
                     'file_hash' => hash_file('sha256', $file->getPathname()),
                     'status' => 'uploaded',
+                    'uploaded_at' => now(),
                 ]);
 
                 $uploadedFiles[] = [
@@ -118,18 +124,21 @@ class ReportBatchController extends Controller
                     'original_name' => $originalName,
                     'stored_name' => $storedName,
                     'size' => $file->getSize(),
+                    'status' => 'uploaded'
                 ];
             }
 
             DB::commit();
 
+            Log::info('Batch uploaded successfully', [
+                'batch_id' => $batch->id,
+                'total_files' => count($uploadedFiles),
+                'user_id' => auth()->id()
+            ]);
+
             // Auto-process if requested
             if ($request->boolean('auto_process', true)) {
-                ProcessLabReportBatch::dispatch($batch);
-                $batch->update([
-                    'status' => 'queued',
-                    'processing_started_at' => now()
-                ]);
+                $this->startBatchProcessing($batch);
             }
 
             if ($request->expectsJson()) {
@@ -144,7 +153,7 @@ class ReportBatchController extends Controller
             }
 
             return redirect()->route('batches.show', $batch)
-                           ->with('success', 'Batch uploaded successfully');
+                ->with('success', 'Batch uploaded successfully');
 
         } catch (\Exception $e) {
             DB::rollback();
@@ -154,6 +163,11 @@ class ReportBatchController extends Controller
                 Storage::disk('private')->deleteDirectory($batchFolder);
             }
 
+            Log::error('Batch upload failed', [
+                'error' => $e->getMessage(),
+                'user_id' => auth()->id()
+            ]);
+
             if ($request->expectsJson()) {
                 return response()->json([
                     'success' => false,
@@ -162,8 +176,221 @@ class ReportBatchController extends Controller
                 ], 500);
             }
 
-            return back()->withErrors(['error' => 'Failed to upload batch'])->withInput();
+            return back()->withErrors(['error' => 'Failed to upload batch: ' . $e->getMessage()])->withInput();
         }
+    }
+
+    /**
+     * Generate auto-incrementing batch name for today
+     */
+    private function generateBatchName()
+    {
+        $today = now()->format('d/m/Y');
+        $todayStart = now()->startOfDay();
+        $todayEnd = now()->endOfDay();
+        
+        // Count batches created today
+        $todayBatchCount = ReportBatch::whereBetween('created_at', [$todayStart, $todayEnd])->count();
+        
+        $batchNumber = $todayBatchCount + 1;
+        
+        return "Batch{$batchNumber} - {$today}";
+    }
+
+    /**
+     * Start batch processing with parallel processing.
+     */
+    private function startBatchProcessing(ReportBatch $batch)
+    {
+        try {
+            $batch->update([
+                'status' => 'processing',
+                'processing_started_at' => now()
+            ]);
+
+            // Dispatch the batch processing job
+            ProcessLabReportBatch::dispatch($batch)->onQueue('lab-reports');
+
+            Log::info('Batch processing started', [
+                'batch_id' => $batch->id,
+                'total_reports' => $batch->total_reports
+            ]);
+
+        } catch (\Exception $e) {
+            $batch->update([
+                'status' => 'failed',
+                'processing_completed_at' => now()
+            ]);
+
+            Log::error('Failed to start batch processing', [
+                'batch_id' => $batch->id,
+                'error' => $e->getMessage()
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Start processing a batch manually.
+     */
+    public function process(Request $request, ReportBatch $reportBatch)
+    {
+        if (in_array($reportBatch->status, ['processing', 'queued'])) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Batch is already being processed'
+                ], 422);
+            }
+            return back()->withErrors(['error' => 'Batch is already being processed']);
+        }
+
+        try {
+            $this->startBatchProcessing($reportBatch);
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $reportBatch->fresh(),
+                    'message' => 'Batch processing started'
+                ]);
+            }
+
+            return back()->with('success', 'Batch processing started');
+
+        } catch (\Exception $e) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to start batch processing',
+                    'error' => $e->getMessage()
+                ], 500);
+            }
+
+            return back()->withErrors(['error' => 'Failed to start batch processing: ' . $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Get real-time batch processing status with individual file updates.
+     */
+    public function status(Request $request, ReportBatch $reportBatch)
+    {
+        // Refresh the batch from database to get latest counts
+        $reportBatch->refresh();
+        
+        // Load lab reports with their current status
+        $reportBatch->load([
+            'labReports' => function ($query) {
+                $query->select('id', 'batch_id', 'original_filename', 'status', 'processing_error', 'processed_at', 'processing_time')
+                      ->orderBy('created_at');
+            }
+        ]);
+
+        // Calculate status counts
+        $statusCounts = $reportBatch->labReports->countBy('status');
+        
+        // Calculate progress
+        $totalProcessed = ($statusCounts['processed'] ?? 0) + ($statusCounts['failed'] ?? 0);
+        $progressPercentage = $reportBatch->total_reports > 0
+            ? ($totalProcessed / $reportBatch->total_reports) * 100
+            : 0;
+
+        // Check if processing is complete
+        $isComplete = $totalProcessed >= $reportBatch->total_reports;
+        
+        // Update batch status if all files are processed
+        if ($isComplete && $reportBatch->status === 'processing') {
+            $this->updateFinalBatchStatus($reportBatch);
+            $reportBatch->refresh();
+        }
+
+        $response = [
+            'success' => true,
+            'data' => [
+                'batch' => $reportBatch,
+                'lab_reports' => $reportBatch->labReports->map(function ($report) {
+                    return [
+                        'id' => $report->id,
+                        'original_filename' => $report->original_filename,
+                        'status' => $report->status,
+                        'processing_error' => $report->processing_error,
+                        'processed_at' => $report->processed_at,
+                        'processing_time' => $report->processing_time,
+                        'has_extracted_data' => !empty($report->extracted_data)
+                    ];
+                }),
+                'progress_percentage' => round($progressPercentage, 2),
+                'status_counts' => $statusCounts,
+                'total_processed' => $totalProcessed,
+                'is_complete' => $isComplete,
+                'is_processing' => in_array($reportBatch->status, ['processing', 'queued']),
+                'processing_duration' => $reportBatch->processing_started_at 
+                    ? \Carbon\Carbon::parse($reportBatch->processing_started_at)->diffInSeconds($reportBatch->processing_completed_at ? \Carbon\Carbon::parse($reportBatch->processing_completed_at) : now()) 
+                    : null
+            ],
+            'message' => 'Batch status retrieved successfully'
+        ];
+
+        if ($request->expectsJson()) {
+            return response()->json($response);
+        }
+
+        return view('batches.status', $response['data']);
+    }
+
+    /**
+     * Get live updates for batch processing (WebSocket alternative).
+     */
+    public function liveStatus(Request $request, ReportBatch $reportBatch)
+    {
+        // This endpoint is designed for polling from frontend
+        $reportBatch->refresh();
+        
+        $reportBatch->load([
+            'labReports' => function ($query) {
+                $query->select('id', 'batch_id', 'original_filename', 'status', 'processed_at', 'processing_time')
+                      ->orderBy('created_at');
+            }
+        ]);
+
+        $statusCounts = $reportBatch->labReports->countBy('status');
+        $totalProcessed = ($statusCounts['processed'] ?? 0) + ($statusCounts['failed'] ?? 0);
+        $progressPercentage = $reportBatch->total_reports > 0
+            ? ($totalProcessed / $reportBatch->total_reports) * 100
+            : 0;
+
+        // Update batch status if complete
+        if ($totalProcessed >= $reportBatch->total_reports && $reportBatch->status === 'processing') {
+            $this->updateFinalBatchStatus($reportBatch);
+            $reportBatch->refresh();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'batch_id' => $reportBatch->id,
+                'status' => $reportBatch->status,
+                'progress_percentage' => round($progressPercentage, 2),
+                'total_reports' => $reportBatch->total_reports,
+                'processed_reports' => $statusCounts['processed'] ?? 0,
+                'failed_reports' => $statusCounts['failed'] ?? 0,
+                'pending_reports' => $statusCounts['uploaded'] ?? 0,
+                'is_complete' => $totalProcessed >= $reportBatch->total_reports,
+                'is_processing' => in_array($reportBatch->status, ['processing', 'queued']),
+                'lab_reports' => $reportBatch->labReports->map(function ($report) {
+                    return [
+                        'id' => $report->id,
+                        'filename' => $report->original_filename,
+                        'status' => $report->status,
+                        'processed_at' => $report->processed_at,
+                        'processing_time' => $report->processing_time
+                    ];
+                }),
+                'last_updated' => now()->toISOString()
+            ]
+        ]);
     }
 
     /**
@@ -185,113 +412,45 @@ class ReportBatchController extends Controller
     }
 
     /**
-     * Start processing a batch manually.
+     * Update final batch status and counts.
      */
-    public function process(Request $request, ReportBatch $reportBatch)
+    private function updateFinalBatchStatus($reportBatch)
     {
-        if ($reportBatch->status === 'processing') {
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Batch is already being processed'
-                ], 422);
-            }
-            return back()->withErrors(['error' => 'Batch is already being processed']);
+        $reportBatch->refresh();
+
+        // Get actual counts from database
+        $statusCounts = $reportBatch->labReports()
+            ->selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status')
+            ->toArray();
+
+        $processedCount = $statusCounts['processed'] ?? 0;
+        $failedCount = $statusCounts['failed'] ?? 0;
+        $totalProcessed = $processedCount + $failedCount;
+
+        // Determine final status
+        $finalStatus = 'completed';
+        if ($totalProcessed < $reportBatch->total_reports) {
+            $finalStatus = 'partial';
+        } elseif ($failedCount > 0 && $processedCount === 0) {
+            $finalStatus = 'failed';
         }
 
-        if ($reportBatch->status === 'completed') {
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Batch has already been processed'
-                ], 422);
-            }
-            return back()->withErrors(['error' => 'Batch has already been processed']);
-        }
-
-        ProcessLabReportBatch::dispatch($reportBatch);
-        
         $reportBatch->update([
-            'status' => 'queued',
-            'processing_started_at' => now()
+            'processed_reports' => $processedCount,
+            'failed_reports' => $failedCount,
+            'status' => $finalStatus,
+            'processing_completed_at' => now()
         ]);
 
-        if ($request->expectsJson()) {
-            return response()->json([
-                'success' => true,
-                'data' => $reportBatch,
-                'message' => 'Batch processing started'
-            ]);
-        }
-
-        return back()->with('success', 'Batch processing started');
-    }
-
-    /**
-     * Get batch processing status.
-     */
-    public function status(Request $request, ReportBatch $reportBatch)
-    {
-        $reportBatch->load(['labReports' => function($query) {
-            $query->select('id', 'batch_id', 'status', 'processing_error');
-        }]);
-
-        $statusCounts = $reportBatch->labReports->countBy('status');
-        $progressPercentage = $reportBatch->getProgressPercentage();
-
-        $response = [
-            'success' => true,
-            'data' => [
-                'batch' => $reportBatch,
-                'progress_percentage' => round($progressPercentage, 2),
-                'status_counts' => $statusCounts,
-                'is_complete' => $reportBatch->isComplete(),
-                'is_processing' => $reportBatch->isProcessing(),
-            ],
-            'message' => 'Batch status retrieved successfully'
-        ];
-
-        if ($request->expectsJson()) {
-            return response()->json($response);
-        }
-
-        return view('batches.status', $response['data']);
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Request $request, ReportBatch $reportBatch)
-    {
-        try {
-            // Delete physical files
-            $batchFolder = 'lab_reports/batch_' . $reportBatch->id;
-            Storage::disk('private')->deleteDirectory($batchFolder);
-
-            // Delete database records (cascade will handle lab_reports)
-            $reportBatch->delete();
-
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Batch deleted successfully'
-                ]);
-            }
-
-            return redirect()->route('batches.index')
-                           ->with('success', 'Batch deleted successfully');
-
-        } catch (\Exception $e) {
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to delete batch',
-                    'error' => $e->getMessage()
-                ], 500);
-            }
-
-            return back()->withErrors(['error' => 'Failed to delete batch']);
-        }
+        Log::info('Batch processing completed', [
+            'batch_id' => $reportBatch->id,
+            'total_reports' => $reportBatch->total_reports,
+            'processed' => $processedCount,
+            'failed' => $failedCount,
+            'final_status' => $finalStatus
+        ]);
     }
 
     /**
@@ -314,26 +473,67 @@ class ReportBatchController extends Controller
         // Reset failed reports to uploaded status
         $reportBatch->labReports()->where('status', 'failed')->update([
             'status' => 'uploaded',
-            'processing_error' => null
+            'processing_error' => null,
+            'processed_at' => null,
+            'processing_time' => null,
+            'extracted_data' => null
         ]);
 
         // Update batch counts
         $reportBatch->update([
             'failed_reports' => 0,
-            'processed_reports' => $reportBatch->processed_reports - $failedReports->count()
+            'processed_reports' => $reportBatch->processed_reports - $failedReports->count(),
+            'status' => 'processing',
+            'processing_started_at' => now()
         ]);
 
-        // Restart processing
-        ProcessLabReportBatch::dispatch($reportBatch);
+        ProcessLabReportBatch::dispatch($reportBatch)->onQueue('lab-reports');
 
         if ($request->expectsJson()) {
             return response()->json([
                 'success' => true,
-                'data' => $reportBatch,
+                'data' => $reportBatch->fresh(),
                 'message' => "Retrying {$failedReports->count()} failed reports"
             ]);
         }
 
         return back()->with('success', "Retrying {$failedReports->count()} failed reports");
+    }
+
+    /**
+     * Delete a batch and all its files.
+     */
+    public function destroy(Request $request, ReportBatch $reportBatch)
+    {
+        try {
+            $batchFolder = 'lab_reports/batch_' . $reportBatch->id;
+            Storage::disk('private')->deleteDirectory($batchFolder);
+            $reportBatch->delete();
+            Log::info('Batch deleted successfully', [
+                'batch_id' => $reportBatch->id,
+                'user_id' => auth()->id()
+            ]);
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Batch deleted successfully'
+                ]);
+            }
+            return redirect()->route('batches.index')
+                ->with('success', 'Batch deleted successfully');
+        } catch (\Exception $e) {
+            Log::error('Failed to delete batch', [
+                'batch_id' => $reportBatch->id,
+                'error' => $e->getMessage()
+            ]);
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to delete batch',
+                    'error' => $e->getMessage()
+                ], 500);
+            }
+            return back()->withErrors(['error' => 'Failed to delete batch']);
+        }
     }
 }

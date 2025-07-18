@@ -8,6 +8,7 @@ use App\Http\Controllers\ReportBatchController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PatientController;
 use App\Http\Controllers\Auth\OtpPasswordController;
 use App\Http\Requests\Auth\LoginRequest;
 use Illuminate\Http\Request;
@@ -46,30 +47,48 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('users/role/{role}', [UserController::class, 'getByRole']);
     Route::get('users/{id}/profile-picture', [UserController::class, 'getProfilePicture']);
 
-    // Batch processing routes
-    Route::apiResource('batches', ReportBatchController::class);
-    Route::post('batches/{reportBatch}/process', [ReportBatchController::class, 'process']);
-    Route::get('batches/{reportBatch}/status', [ReportBatchController::class, 'status']);
-    Route::post('batches/{reportBatch}/retry-failed', [ReportBatchController::class, 'retryFailed']);
-    // Lab report upload and processing
-    Route::post('/lab-reports/upload', [LabReportController::class, 'upload'])->name('api.lab-reports.upload');
-    Route::get('/lab-reports', [LabReportController::class, 'index'])->name('api.lab-reports.index');
-    Route::get('/lab-reports/{labReport}', [LabReportController::class, 'show'])->name('api.lab-reports.show');
+    
+});
 
-    // Lab report corrections
-    Route::get('/lab-reports/{labReport}/corrections', [LabReportCorrectionController::class, 'getCorrections'])
-        ->name('api.lab-reports.corrections');
-    Route::post('/lab-reports/{labReport}/corrections', [LabReportCorrectionController::class, 'saveCorrections'])
-        ->name('api.lab-reports.save-corrections');
+// Lab Report Batch Processing Routes
+Route::middleware('auth:sanctum')->prefix('batches')->name('batches.')->group(function () {
+    // Core CRUD operations
+    Route::get('/', [ReportBatchController::class, 'index'])->name('index');
+    Route::post('/', [ReportBatchController::class, 'store'])->name('store');
+    Route::get('/{reportBatch}', [ReportBatchController::class, 'show'])->name('show');
+    Route::delete('/{reportBatch}', [ReportBatchController::class, 'destroy'])->name('destroy');
+    
+    // Processing operations
+    Route::post('/{reportBatch}/process', [ReportBatchController::class, 'process'])->name('process');
+    Route::post('/{reportBatch}/retry-failed', [ReportBatchController::class, 'retryFailed'])->name('retry-failed');
+    
+    // Real-time status monitoring
+    Route::get('/{reportBatch}/status', [ReportBatchController::class, 'status'])->name('status');
+    Route::get('/{reportBatch}/live-status', [ReportBatchController::class, 'liveStatus'])->name('live-status');
+});
 
-    // Template selection for upload (all authenticated users)
-    Route::get('/templates/upload', [TemplateController::class, 'getTemplatesForUpload'])->name('api.templates.upload');
+// Individual Lab Report Routes
+Route::middleware('auth:sanctum')->prefix('lab-reports')->name('lab-reports.')->group(function () {
+    Route::get('/', [LabReportController::class, 'index'])->name('index');
+    Route::get('/{labReport}', [LabReportController::class, 'show'])->name('show');
+    Route::post('/{labReport}/verify', [LabReportController::class, 'verify'])->name('verify'); // ADD THIS
+    Route::delete('/{labReport}', [LabReportController::class, 'destroy'])->name('destroy');
+    Route::get('/{labReport}/download', [LabReportController::class, 'download'])->name('download');
+});
 
-    // Admin-only template API routes
-    Route::middleware('can:admin')->group(function () {
-        Route::get('/templates', [TemplateController::class, 'apiIndex'])->name('api.templates.index');
-        Route::post('/templates/analyze', [TemplateController::class, 'analyze'])->name('api.templates.analyze');
-        Route::post('/templates/create-from-pdf', [TemplateController::class, 'processPdfForTemplate'])->name('api.templates.create-from-pdf');
-        Route::get('/templates/custom-categories', [TemplateController::class, 'getCustomCategories'])->name('api.templates.custom-categories');
-    });
+// Patient Management Routes
+Route::middleware('auth:sanctum')->prefix('patients')->name('patients.')->group(function () {
+    Route::get('/', [PatientController::class, 'index'])->name('index');
+    Route::post('/', [PatientController::class, 'store'])->name('store');
+    Route::get('/search', [PatientController::class, 'search'])->name('search');
+    Route::get('/{patient}', [PatientController::class, 'show'])->name('show');
+});
+
+// Health check route (optional but useful)
+Route::get('/health', function () {
+    return response()->json([
+        'status' => 'ok',
+        'timestamp' => now()->toISOString(),
+        'version' => '1.0.0'
+    ]);
 });

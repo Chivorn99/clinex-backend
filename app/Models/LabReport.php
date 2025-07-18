@@ -26,18 +26,26 @@ class LabReport extends Model
         'report_date',
         'notes',
         'status',
+        'uploaded_at',
         'processing_started_at',
         'processing_completed_at',
+        'processed_at',
+        'processing_time',
         'verified_at',
         'processing_error',
+        'extracted_data',
     ];
 
     protected $casts = [
         'report_date' => 'date',
         'file_size' => 'integer',
+        'uploaded_at' => 'datetime',
         'processing_started_at' => 'datetime',
         'processing_completed_at' => 'datetime',
+        'processed_at' => 'datetime',
+        'processing_time' => 'integer',
         'verified_at' => 'datetime',
+        'extracted_data' => 'json',
     ];
 
     public function batch(): BelongsTo
