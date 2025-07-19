@@ -536,4 +536,144 @@ class ReportBatchController extends Controller
             return back()->withErrors(['error' => 'Failed to delete batch']);
         }
     }
+
+    /**
+     * Get lab reports ready for verification (status = 'processed')
+     */
+    public function getReportsForVerification(Request $request, ReportBatch $reportBatch)
+    {
+        $query = $reportBatch->labReports()
+            ->with(['patient', 'uploader'])
+            ->where('status', 'processed')
+            ->whereNull('verified_at');
+
+        // Optional: Filter by specific criteria
+        if ($request->filled('search')) {
+            $query->where('original_filename', 'like', '%' . $request->search . '%');
+        }
+
+        $reportsToVerify = $query->latest('processed_at')->paginate($request->get('per_page', 10));
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'batch' => $reportBatch->only(['id', 'name', 'status']),
+                'reports_to_verify' => $reportsToVerify,
+                'total_pending_verification' => $reportsToVerify->total(),
+            ],
+            'message' => 'Reports ready for verification retrieved successfully'
+        ]);
+    }
+
+    /**
+     * Get all processed reports across all batches that need verification
+     */
+    public function getAllReportsForVerification(Request $request)
+    {
+        $query = LabReport::with(['batch', 'patient', 'uploader'])
+            ->where('status', 'processed')
+            ->whereNull('verified_at');
+
+        // Filter by batch
+        if ($request->filled('batch_id')) {
+            $query->where('batch_id', $request->batch_id);
+        }
+
+        // Filter by uploader
+        if ($request->filled('uploaded_by')) {
+            $query->where('uploaded_by', $request->uploaded_by);
+        }
+
+        // Search by filename or patient name
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('original_filename', 'like', "%{$search}%")
+                  ->orWhereHas('patient', function($patientQuery) use ($search) {
+                      $patientQuery->where('name', 'like', "%{$search}%")
+                                   ->orWhere('patient_id', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        $reportsToVerify = $query->latest('processed_at')->paginate($request->get('per_page', 15));
+
+        // Transform data for verification interface
+        $reportsToVerify->getCollection()->transform(function ($report) {
+            return [
+                'id' => $report->id,
+                'original_filename' => $report->original_filename,
+                'processed_at' => $report->processed_at,
+                'processing_time' => $report->processing_time,
+                'extracted_data_summary' => [
+                    'has_patient_info' => !empty($report->extracted_data['patientInfo'] ?? null),
+                    'has_lab_info' => !empty($report->extracted_data['labInfo'] ?? null),
+                    'test_count' => count($report->extracted_data['testResults'] ?? []),
+                    'categories' => collect($report->extracted_data['testResults'] ?? [])->pluck('category')->unique()->values()
+                ],
+                'patient' => $report->patient ? [
+                    'id' => $report->patient->id,
+                    'name' => $report->patient->name,
+                    'patient_id' => $report->patient->patient_id
+                ] : null,
+                'batch' => [
+                    'id' => $report->batch->id,
+                    'name' => $report->batch->name
+                ],
+                'uploader' => $report->uploader->name ?? 'Unknown',
+                'verification_url' => route('lab-reports.show', $report->id),
+                'verify_url' => route('lab-reports.verify', $report->id)
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $reportsToVerify,
+            'summary' => [
+                'total_pending' => $reportsToVerify->total(),
+                'per_page' => $reportsToVerify->perPage(),
+                'current_page' => $reportsToVerify->currentPage()
+            ],
+            'message' => 'Reports ready for verification retrieved successfully'
+        ]);
+    }
+
+    /**
+     * Export verified reports from a specific batch as CSV
+     */
+    public function exportBatchVerifiedCsv(Request $request, ReportBatch $reportBatch)
+    {
+        $verifiedReports = $reportBatch->labReports()
+            ->with(['patient', 'extractedData', 'extractedLabInfo', 'verifier'])
+            ->where('status', 'verified')
+            ->whereNotNull('verified_at')
+            ->orderBy('verified_at', 'desc')
+            ->get();
+
+        if ($verifiedReports->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No verified reports found in this batch'
+            ], 404);
+        }
+
+        // Generate CSV content (reuse the same method from LabReportController)
+        $csvContent = $this->generateVerifiedReportsCsv($verifiedReports, $reportBatch);
+
+        $filename = 'batch_' . $reportBatch->id . '_verified_reports_' . now()->format('Y-m-d_H-i-s') . '.csv';
+
+        return response($csvContent)
+            ->header('Content-Type', 'text/csv')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->header('Content-Length', strlen($csvContent));
+    }
+
+    /**
+     * Generate CSV content for batch verified reports
+     */
+    private function generateVerifiedReportsCsv($reports, $batch = null)
+    {
+        // Same implementation as in LabReportController
+        // You can either copy the method or create a shared service/trait
+    }
 }

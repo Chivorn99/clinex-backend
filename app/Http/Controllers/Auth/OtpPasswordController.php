@@ -35,12 +35,69 @@ class OtpPasswordController extends Controller
         Mail::to($request->email)
             ->send(new SendOtpMail($code, $expiresAt));
 
-        return back()->with('status', 'OTP sent! Check your email.');
+        return redirect()
+            ->route('password.verify.otp', ['email' => $request->email])
+            ->with('status', 'OTP sent! Check your email.');
     }
 
+    /**
+     * Verify the OTP code provided by the user.
+     */
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email|exists:users',
+            'code' => 'required|digits:6',
+        ]);
+
+        $otp = DB::table('password_otps')
+            ->where('email', $request->email)
+            ->where('code', $request->code)
+            ->where('expires_at', '>', now())
+            ->first();
+
+        if (!$otp) {
+            return back()->withErrors(['code' => 'Invalid or expired code']);
+        }
+
+        return redirect()->route('password.reset.otp', ['email' => $request->email, 'code' => $request->code]);
+    }
+
+    /**
+     * Resend OTP to user's email.
+     */
+    public function resendOtp(Request $request)
+    {
+        $request->validate(['email' => 'required|email|exists:users']);
+        $code = random_int(100000, 999999);
+        $expiresAt = Carbon::now()->addMinutes(10);
+
+        DB::table('password_otps')->updateOrInsert(
+            ['email' => $request->email],
+            [
+                'code' => $code,
+                'expires_at' => $expiresAt,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+
+        Mail::to($request->email)
+            ->send(new SendOtpMail($code, $expiresAt));
+
+        return redirect()->route('password.verify.otp', ['email' => $request->email])
+            ->with('status', 'New OTP sent! Check your email.');
+    }
+
+    /**
+     * Show the reset password form after OTP verification.
+     */
     public function showResetForm(Request $request)
     {
-        return view('auth.reset-password-otp', ['email' => $request->email]);
+        return view('auth.reset-password-otp', [
+            'email' => $request->email,
+            'code' => $request->code
+        ]);
     }
 
     public function resetPassword(Request $request)

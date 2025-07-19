@@ -19,7 +19,7 @@ class LabReportController extends Controller
 {
 
     protected $documentAiService;
-    
+
 
     /**
      * Inject the DocumentAiService into the controller.
@@ -79,16 +79,22 @@ class LabReportController extends Controller
      */
     public function index(Request $request)
     {
+        // Start building the query to fetch Lab Reports, including related data
+        // for batches, patients, and the uploader to avoid N+1 problems.
         $query = LabReport::with(['batch', 'patient', 'uploader']);
 
+        // If a 'batch_id' is provided in the request, filter reports by that batch.
         if ($request->filled('batch_id')) {
             $query->where('batch_id', $request->batch_id);
         }
 
+        // If a 'status' is provided, filter reports by their status.
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
+        // If a 'verified' filter is provided, check for reports that are
+        // either verified (verified_at is not null) or not verified (verified_at is null).
         if ($request->filled('verified')) {
             if ($request->boolean('verified')) {
                 $query->whereNotNull('verified_at');
@@ -97,16 +103,21 @@ class LabReportController extends Controller
             }
         }
 
-        $labReports = $query->latest()->paginate($request->get('per_page', 15));
+        // Fetch ALL lab reports that match the query criteria, ordered by the latest.
+        // The paginate() method has been replaced with get() to disable pagination.
+        $labReports = $query->latest()->get();
 
+        // If the request expects a JSON response (e.g., it's an API call),
+        // return the data in JSON format.
         if ($request->expectsJson()) {
             return response()->json([
                 'success' => true,
-                'data' => $labReports,
+                'data' => $labReports, // This now contains all reports, not a paginator object.
                 'message' => 'Lab reports retrieved successfully'
             ]);
         }
 
+        // Otherwise, return the standard view with the lab reports data.
         return view('lab-reports.index', compact('labReports'));
     }
 
@@ -193,6 +204,103 @@ class LabReportController extends Controller
         return view('lab-reports.show', compact('labReport'));
     }
 
+    // Removed duplicate verify method
+
+    /**
+     * Get test results for a specific lab report
+     */
+    public function testResults(LabReport $labReport)
+    {
+        $labReport->load(['extractedData', 'extractedLabInfo', 'patient']);
+
+        // Group test results by category
+        $groupedResults = $labReport->extractedData->groupBy('category');
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'lab_report' => $labReport,
+                'lab_info' => $labReport->extractedLabInfo,
+                'test_results_by_category' => $groupedResults,
+                'test_results_flat' => $labReport->extractedData
+            ],
+            'message' => 'Test results retrieved successfully'
+        ]);
+    }
+
+    /**
+     * Get all lab reports with comprehensive data
+     */
+    public function getAllWithDetails(Request $request)
+    {
+        $query = LabReport::with([
+            'batch',
+            'patient',
+            'uploader',
+            'verifier',
+            'extractedData',
+            'extractedLabInfo'
+        ]);
+
+        // Apply existing filters from your index method
+        if ($request->filled('batch_id')) {
+            $query->where('batch_id', $request->batch_id);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('verified')) {
+            if ($request->boolean('verified')) {
+                $query->whereNotNull('verified_at');
+            } else {
+                $query->whereNull('verified_at');
+            }
+        }
+
+        if ($request->filled('patient_id')) {
+            $query->where('patient_id', $request->patient_id);
+        }
+
+        $labReports = $query->latest()->paginate($request->get('per_page', 15));
+
+        // Transform data for frontend consumption
+        $labReports->getCollection()->transform(function ($report) {
+            return [
+                'id' => $report->id,
+                'original_filename' => $report->original_filename,
+                'status' => $report->status,
+                'verified_at' => $report->verified_at,
+                'processed_at' => $report->processed_at,
+                'notes' => $report->notes,
+                'patient' => $report->patient ? [
+                    'id' => $report->patient->id,
+                    'name' => $report->patient->name,
+                    'patient_id' => $report->patient->patient_id,
+                    'age' => $report->patient->age,
+                    'gender' => $report->patient->gender,
+                    'phone' => $report->patient->phone,
+                ] : null,
+                'batch' => [
+                    'id' => $report->batch->id,
+                    'name' => $report->batch->name,
+                ],
+                'lab_info' => $report->extractedLabInfo,
+                'test_count' => $report->extractedData->count(),
+                'categories' => $report->extractedData->pluck('category')->unique()->values(),
+                'uploader' => $report->uploader->name ?? null,
+                'verifier' => $report->verifier->name ?? null,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $labReports,
+            'message' => 'Lab reports with details retrieved successfully'
+        ]);
+    }
+
     /**
      * Verify extracted data and store to database
      */
@@ -208,7 +316,7 @@ class LabReportController extends Controller
         if ($labReport->verified_at) {
             return response()->json([
                 'success' => false,
-                'message' => 'Lab report is already verified'
+                'message' => 'This report has already been verified'
             ], 422);
         }
 
@@ -258,7 +366,7 @@ class LabReportController extends Controller
 
         } catch (\Exception $e) {
             DB::rollback();
-            
+
             Log::error('Lab report verification failed', [
                 'lab_report_id' => $labReport->id,
                 'error' => $e->getMessage()
@@ -299,12 +407,12 @@ class LabReportController extends Controller
         foreach ($testResults as $test) {
             ExtractedData::create([
                 'lab_report_id' => $labReport->id,
-                'category' => $test['category'],      
-                'test_name' => $test['testName'],     
-                'result' => $test['result'],      
-                'unit' => $test['unit'] ?? null,  
-                'reference' => $test['referenceRange'] ?? null, 
-                'flag' => $test['flag'],          
+                'category' => $test['category'],
+                'test_name' => $test['testName'],
+                'result' => $test['result'],
+                'unit' => $test['unit'] ?? null,
+                'reference' => $test['referenceRange'] ?? null,
+                'flag' => $test['flag'],
                 'coordinates' => null,
                 'confidence_score' => 1.0,
                 'is_verified' => true,
@@ -318,7 +426,7 @@ class LabReportController extends Controller
     private function createOrUpdatePatient($patientInfo)
     {
         $patient = Patient::where('patient_id', $patientInfo['patientId'])
-            ->orWhere(function($query) use ($patientInfo) {
+            ->orWhere(function ($query) use ($patientInfo) {
                 $query->where('name', $patientInfo['name']);
                 if (!empty($patientInfo['phone'])) {
                     $query->where('phone', $patientInfo['phone']);
@@ -330,8 +438,8 @@ class LabReportController extends Controller
             // Update existing patient
             $patient->update([
                 'name' => $patientInfo['name'],
-                'age' => $patientInfo['age'],  
-                'gender' => $patientInfo['gender'],   
+                'age' => $patientInfo['age'],
+                'gender' => $patientInfo['gender'],
                 'phone' => $patientInfo['phone'] ?? $patient->phone,
             ]);
         } else {
@@ -339,8 +447,8 @@ class LabReportController extends Controller
             $patient = Patient::create([
                 'patient_id' => $patientInfo['patientId'],
                 'name' => $patientInfo['name'],
-                'age' => $patientInfo['age'], 
-                'gender' => $patientInfo['gender'], 
+                'age' => $patientInfo['age'],
+                'gender' => $patientInfo['gender'],
                 'phone' => $patientInfo['phone'],
             ]);
         }
@@ -358,5 +466,171 @@ class LabReportController extends Controller
         } catch (\Exception $e) {
             return null;
         }
+    }
+
+    /**
+     * Export verified lab reports as CSV
+     */
+    public function exportVerifiedCsv(Request $request)
+    {
+        $query = LabReport::with(['patient', 'batch', 'extractedData', 'extractedLabInfo', 'verifier'])
+            ->where('status', 'verified')
+            ->whereNotNull('verified_at');
+
+        // Apply filters
+        if ($request->filled('batch_id')) {
+            $query->where('batch_id', $request->batch_id);
+        }
+
+        if ($request->filled('verified_by')) {
+            $query->where('verified_by', $request->verified_by);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('verified_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('verified_at', '<=', $request->date_to);
+        }
+
+        $verifiedReports = $query->orderBy('verified_at', 'desc')->get();
+
+        if ($verifiedReports->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No verified reports found for export'
+            ], 404);
+        }
+
+        // Generate CSV content
+        $csvContent = $this->generateVerifiedReportsCsv($verifiedReports);
+
+        $filename = 'verified_lab_reports_' . now()->format('Y-m-d_H-i-s') . '.csv';
+
+        return response($csvContent)
+            ->header('Content-Type', 'text/csv')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->header('Content-Length', strlen($csvContent));
+    }
+
+    /**
+     * Generate CSV content for verified reports
+     */
+    private function generateVerifiedReportsCsv($reports)
+    {
+        $output = fopen('php://temp', 'r+');
+
+        // CSV Headers
+        $headers = [
+            'Report ID',
+            'Original Filename',
+            'Batch Name',
+            'Patient ID',
+            'Patient Name',
+            'Age',
+            'Gender',
+            'Phone',
+            'Lab ID',
+            'Requested By',
+            'Requested Date',
+            'Collected Date',
+            'Analysis Date',
+            'Validated By',
+            'Test Name',
+            'Result',
+            'Unit',
+            'Reference Range',
+            'Flag',
+            'Category',
+            'Verified By',
+            'Verified At',
+            'Notes'
+        ];
+
+        fputcsv($output, $headers);
+
+        foreach ($reports as $report) {
+            $baseData = [
+                'report_id' => $report->id,
+                'filename' => $report->original_filename,
+                'batch_name' => $report->batch->name ?? '',
+                'patient_id' => $report->patient->patient_id ?? '',
+                'patient_name' => $report->patient->name ?? '',
+                'age' => $report->patient->age ?? '',
+                'gender' => $report->patient->gender ?? '',
+                'phone' => $report->patient->phone ?? '',
+                'lab_id' => $report->extractedLabInfo->lab_id ?? '',
+                'requested_by' => $report->extractedLabInfo->requested_by ?? '',
+                'requested_date' => $report->extractedLabInfo->requested_date ?? '',
+                'collected_date' => $report->extractedLabInfo->collected_date ?? '',
+                'analysis_date' => $report->extractedLabInfo->analysis_date ?? '',
+                'validated_by' => $report->extractedLabInfo->validated_by ?? '',
+                'verified_by' => $report->verifier->name ?? '',
+                'verified_at' => $report->verified_at ? $report->verified_at->format('Y-m-d H:i:s') : '',
+                'notes' => $report->notes ?? ''
+            ];
+
+            // If report has test results, create a row for each test
+            if ($report->extractedData->isNotEmpty()) {
+                foreach ($report->extractedData as $testResult) {
+                    $row = array_merge($baseData, [
+                        'test_name' => $testResult->test_name,
+                        'result' => $testResult->result,
+                        'unit' => $testResult->unit ?? '',
+                        'reference_range' => $testResult->reference ?? '',
+                        'flag' => $testResult->flag ?? '',
+                        'category' => $testResult->category ?? ''
+                    ]);
+                    fputcsv($output, array_values($row));
+                }
+            } else {
+                // If no test results, create one row with empty test fields
+                $row = array_merge($baseData, [
+                    'test_name' => '',
+                    'result' => '',
+                    'unit' => '',
+                    'reference_range' => '',
+                    'flag' => '',
+                    'category' => ''
+                ]);
+                fputcsv($output, array_values($row));
+            }
+        }
+
+        rewind($output);
+        $csvContent = stream_get_contents($output);
+        fclose($output);
+
+        return $csvContent;
+    }
+
+    /**
+     * Get PDF as base64 for authenticated requests
+     */
+    public function getPdfData(LabReport $labReport)
+    {
+        $filePath = $labReport->storage_path;
+        
+        if (!\Storage::disk('private')->exists($filePath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File not found'
+            ], 404);
+        }
+
+        $fileContent = \Storage::disk('private')->get($filePath);
+        $base64Content = base64_encode($fileContent);
+        
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'filename' => $labReport->original_filename,
+                'content_type' => 'application/pdf',
+                'base64_content' => $base64Content,
+                'size' => strlen($fileContent)
+            ],
+            'message' => 'PDF content retrieved successfully'
+        ]);
     }
 }

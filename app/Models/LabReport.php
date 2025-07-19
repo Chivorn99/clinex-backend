@@ -63,7 +63,23 @@ class LabReport extends Model
         return $this->belongsTo(User::class, 'uploaded_by');
     }
 
+    /**
+     * Alias for uploader relationship for more consistent naming
+     */
+    public function uploadedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
     public function verifier(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'verified_by');
+    }
+
+    /**
+     * Alias for verifier relationship for more consistent naming
+     */
+    public function verifiedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'verified_by');
     }
@@ -85,7 +101,10 @@ class LabReport extends Model
 
     public function getFullPath(): string
     {
-        return storage_path('app/private/' . $this->storage_path);
+        // Check if the property exists using array access to prevent undefined property errors
+        $storagePath = $this->attributes['storage_path'] ?? 'reports/unknown.pdf';
+
+        return storage_path('app/private/' . $storagePath);
     }
 
     public function fileExists(): bool
