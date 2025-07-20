@@ -42,10 +42,6 @@
             <div class="flex justify-between h-16">
                 <div class="flex items-center">
                     <div class="flex-shrink-0 flex items-center">
-                        <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                        </svg>
                         <span class="ml-2 text-xl font-bold text-blue-900">Clinex</span>
                     </div>
                 </div>
@@ -256,6 +252,31 @@
                             <h3 class="text-lg font-semibold text-gray-900 mb-1">Patient Management</h3>
                             <p class="text-gray-600 mb-3">View and manage all patient</p>
                             <div class="flex items-center text-orange-600">
+                                <span class="text-sm font-medium">Manage Patient</span>
+                                <svg class="h-4 w-4 ml-1 transform group-hover:translate-x-1 transition-transform duration-200"
+                                    fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </a>
+                <a href="{{ route('users.create') }}"
+                    class="bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 overflow-hidden group">
+                    <div class="flex p-6">
+                        <div
+                            class="bg-gradient-to-br from-pink-500 to-pink-700 text-white p-4 rounded-lg shadow mr-5 group-hover:scale-105 transition-transform duration-300">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24"
+                                stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-lg font-semibold text-gray-900 mb-1">Create User Account</h3>
+                            <p class="text-gray-600 mb-3">Create new user account</p>
+                            <div class="flex items-center text-pink-600">
                                 <span class="text-sm font-medium">Manage Patient</span>
                                 <svg class="h-4 w-4 ml-1 transform group-hover:translate-x-1 transition-transform duration-200"
                                     fill="none" viewBox="0 0 24 24" stroke="currentColor">

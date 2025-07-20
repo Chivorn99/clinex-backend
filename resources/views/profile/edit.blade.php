@@ -41,33 +41,49 @@
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
         }
     </style>
+    <script src="//unpkg.com/alpinejs" defer></script>
 </head>
 
 <body class="bg-gray-100 min-h-screen">
     <!-- Top Navigation Bar -->
-    <nav class="bg-white border-b border-gray-200">
+    <nav class="bg-white shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
-                <div class="flex">
+                <div class="flex items-center">
                     <div class="flex-shrink-0 flex items-center">
-                        <a href="{{ route('dashboard') }}" class="text-xl font-bold text-blue-600">
-                            ClinicSync
-                        </a>
+                        <span class="ml-2 text-xl font-bold text-blue-900">Clinex</span>
                     </div>
                 </div>
                 <div class="flex items-center">
-                    <div class="relative ml-3">
-                        <div class="flex items-center">
-                            <button type="button"
-                                class="bg-gray-800 flex text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                                id="user-menu-button">
-                                <span class="sr-only">Open user menu</span>
-                                <div
-                                    class="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-medium">
-                                    {{ substr(Auth::user()->name, 0, 1) }}
+                    <div class="ml-3 relative" x-data="{ open: false }">
+                        <button @click="open = !open" class="flex items-center focus:outline-none">
+                            <span class="text-sm text-gray-700 mr-2">{{ Auth::user()->name }}</span>
+                            <img class="h-8 w-8 rounded-full object-cover border-2 border-gray-200"
+                                src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF"
+                                alt="{{ Auth::user()->name }}">
+                        </button>
+                        <!-- Dropdown -->
+                        <div x-show="open" @click.away="open = false"
+                            class="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50"
+                            x-cloak>
+                            <div class="py-3 px-4 border-b border-gray-100 flex items-center">
+                                <img class="h-10 w-10 rounded-full object-cover border-2 border-gray-200"
+                                    src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF&size=128"
+                                    alt="{{ Auth::user()->name }}">
+                                <div class="ml-3">
+                                    <div class="text-sm font-medium text-gray-900">{{ Auth::user()->name }}</div>
+                                    <div class="text-xs text-gray-500">{{ Auth::user()->email }}</div>
                                 </div>
-                            </button>
-                            <span class="ml-3 text-gray-700 text-sm font-medium">{{ Auth::user()->name }}</span>
+                            </div>
+                            <div class="py-1">
+                                <a href="{{ route('profile.edit') }}"
+                                    class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Edit Profile</a>
+                                <form method="POST" action="{{ route('logout') }}">
+                                    @csrf
+                                    <button type="submit"
+                                        class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Logout</button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -111,7 +127,51 @@
                             address.</p>
                     </div>
                     <div class="px-4 py-6 sm:p-6 bg-white">
-                        @include('profile.partials.update-profile-information-form')
+                        <form method="POST" action="{{ route('profile.update') }}" enctype="multipart/form-data">
+                            @csrf
+                            @method('PATCH')
+                            <!-- Name -->
+                            <div class="mb-4">
+                                <label class="block text-gray-700">Name</label>
+                                <input type="text" name="name" value="{{ old('name', $user->name) }}" class="w-full border rounded px-3 py-2" required>
+                            </div>
+                            <!-- Email -->
+                            <div class="mb-4">
+                                <label class="block text-gray-700">Email</label>
+                                <input type="email" name="email" value="{{ old('email', $user->email) }}" class="w-full border rounded px-3 py-2" required>
+                            </div>
+                            <!-- Phone Number -->
+                            <div class="mb-4">
+                                <label class="block text-gray-700">Phone Number</label>
+                                <input type="text" name="phone_number" value="{{ old('phone_number', $user->phone_number) }}" class="w-full border rounded px-3 py-2">
+                            </div>
+                            <!-- Specialization -->
+                            <div class="mb-4">
+                                <label class="block text-gray-700">Specialization</label>
+                                <input type="text" name="specialization" value="{{ old('specialization', $user->specialization) }}" class="w-full border rounded px-3 py-2">
+                            </div>
+                            <!-- Profile Picture Upload -->
+                            <div class="mb-4">
+                                <label class="block text-gray-700">Profile Picture</label>
+                                @if($user->profile_pic)
+                                    <div class="mb-2">
+                                        <img src="{{ Storage::disk('public')->url($user->profile_pic) }}" alt="Profile Picture" class="h-16 w-16 rounded-full object-cover border-2 border-gray-200">
+                                    </div>
+                                @endif
+                                <input type="file" name="profile_pic" class="block w-full text-sm text-gray-500">
+                                @if($user->profile_pic)
+                                    <div class="mt-2">
+                                        <label>
+                                            <input type="checkbox" name="remove_profile_pic" value="1">
+                                            Remove current picture
+                                        </label>
+                                    </div>
+                                @endif
+                            </div>
+                            <div class="flex items-center">
+                                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save Changes</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 

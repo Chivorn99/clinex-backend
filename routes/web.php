@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\LabReportController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\ReportManagementController;
+use App\Http\Controllers\UserController;
 use App\Models\LabReport;
 use App\Models\Patient;
 use App\Http\Controllers\PatientController;
@@ -47,6 +48,11 @@ Route::middleware('auth')->group(function () {
     // Route::get('/lab-reports/{labReport}/pdf', [LabReportCorrectionController::class, 'showPdf'])
     //     ->name('lab-reports.pdf');
 
+    // User management routes (admin only)
+    Route::middleware(['auth', 'can:admin'])->group(function () {
+        Route::get('/users/create', [UserController::class, 'create'])->name('users.create');
+        Route::post('/users', [UserController::class, 'store'])->name('users.store');
+    });
     // Template management routes (admin only)
     Route::middleware('can:admin')->group(function () {
         Route::get('/templates', [TemplateController::class, 'index'])->name('templates.index');
@@ -88,6 +94,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/reports', [ReportManagementController::class, 'index'])->name('reports.index');
         Route::get('/reports/{report}', [ReportManagementController::class, 'show'])->name('reports.show');
         Route::get('/reports/{report}/download', [ReportManagementController::class, 'download'])->name('reports.download');
+        Route::get('/reports/{report}/edit', [ReportManagementController::class, 'edit'])->name('reports.edit');
+        Route::patch('/reports/{report}', [ReportManagementController::class, 'update'])->name('reports.update');
 
         Route::get('/patients', [PatientController::class, 'index'])->name('patients.index');
         Route::get('/patients/{patient}', [PatientController::class, 'show'])->name('patients.show');

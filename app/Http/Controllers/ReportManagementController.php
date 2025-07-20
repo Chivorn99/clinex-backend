@@ -68,8 +68,23 @@ class ReportManagementController extends Controller
     public function edit($id)
     {
         $report = LabReport::findOrFail($id);
-        // return your edit view, e.g.:
         return view('admin.reports.edit', compact('report'));
+    }
+
+    public function update(Request $request, $id)
+    {
+        $report = LabReport::findOrFail($id);
+
+        $validated = $request->validate([
+            'original_filename' => 'required|string|max:255',
+            'report_date' => 'nullable|date',
+            'status' => 'required|in:processing,processed,verified,error',
+        ]);
+
+        $report->update($validated);
+
+        return redirect()->route('reports.show', $report->id)
+            ->with('success', 'Report updated successfully.');
     }
 
     public function destroy($id)

@@ -10,6 +10,9 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\UserInvitationMail;
 
 class UserController extends Controller
 {
@@ -79,7 +82,7 @@ class UserController extends Controller
             ]);
         }
 
-        return view('users.create');
+        return view('admin.users.create-account');
     }
 
     /**
@@ -90,7 +93,6 @@ class UserController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
             'role' => 'required|in:admin,lab_technician',
             'phone_number' => 'nullable|string|max:20',
             'specialization' => 'nullable|string|max:255',
@@ -111,7 +113,8 @@ class UserController extends Controller
 
         try {
             $userData = $validator->validated();
-            $userData['password'] = Hash::make($userData['password']);
+            $randomPassword = Str::random(12);
+            $userData['password'] = Hash::make($randomPassword);
 
             // Handle profile picture upload
             if ($request->hasFile('profile_pic')) {
@@ -122,6 +125,12 @@ class UserController extends Controller
             $user = User::create($userData);
             $user->makeHidden(['password', 'remember_token']);
 
+            // Generate password reset token
+            $token = app('auth.password.broker')->createToken($user);
+
+            // Send invitation email
+            Mail::to($user->email)->send(new UserInvitationMail($user, $token, $randomPassword));
+
             if ($request->expectsJson()) {
                 return response()->json([
                     'success' => true,
@@ -130,7 +139,7 @@ class UserController extends Controller
                 ], 201);
             }
 
-            return redirect()->route('users.index')->with('success', 'User created successfully');
+            return redirect()->route('users.index')->with('success', 'User created and invitation email sent!');
 
         } catch (\Exception $e) {
             // Clean up uploaded file if user creation fails

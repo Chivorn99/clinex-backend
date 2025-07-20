@@ -15,24 +15,48 @@
         .fade-in { animation: fadeIn 0.5s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
+    <script src="//unpkg.com/alpinejs" defer></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <!-- Top Navigation Bar -->
-    <nav class="bg-white border-b border-gray-200">
+    <nav class="bg-white shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
-                <div class="flex">
+                <div class="flex items-center">
                     <div class="flex-shrink-0 flex items-center">
-                        <a href="{{ route('dashboard') }}" class="text-xl font-bold text-blue-600">Clinex</a>
+                        <span class="ml-2 text-xl font-bold text-blue-900">Clinex</span>
                     </div>
                 </div>
                 <div class="flex items-center">
-                    <div class="relative ml-3">
-                        <div class="flex items-center">
-                            <div class="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-medium">
-                                {{ substr(Auth::user()->name, 0, 1) }}
+                    <div class="ml-3 relative" x-data="{ open: false }">
+                        <button @click="open = !open" class="flex items-center focus:outline-none">
+                            <span class="text-sm text-gray-700 mr-2">{{ Auth::user()->name }}</span>
+                            <img class="h-8 w-8 rounded-full object-cover border-2 border-gray-200"
+                                src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF"
+                                alt="{{ Auth::user()->name }}">
+                        </button>
+                        <!-- Dropdown -->
+                        <div x-show="open" @click.away="open = false"
+                            class="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50"
+                            x-cloak>
+                            <div class="py-3 px-4 border-b border-gray-100 flex items-center">
+                                <img class="h-10 w-10 rounded-full object-cover border-2 border-gray-200"
+                                    src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF&size=128"
+                                    alt="{{ Auth::user()->name }}">
+                                <div class="ml-3">
+                                    <div class="text-sm font-medium text-gray-900">{{ Auth::user()->name }}</div>
+                                    <div class="text-xs text-gray-500">{{ Auth::user()->email }}</div>
+                                </div>
                             </div>
-                            <span class="ml-3 text-gray-700 text-sm font-medium">{{ Auth::user()->name }}</span>
+                            <div class="py-1">
+                                <a href="{{ route('profile.edit') }}"
+                                    class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Edit Profile</a>
+                                <form method="POST" action="{{ route('logout') }}">
+                                    @csrf
+                                    <button type="submit"
+                                        class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Logout</button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
