@@ -67,13 +67,33 @@
                     </a>
                     <h1 class="text-2xl font-semibold text-gray-900">Report Details</h1>
                 </div>
-                <div>
-                    <a href="{{ route('reports.index') }}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-sm transition-all duration-300">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                <div class="flex space-x-2">
+                    <a href="{{ route('reports.index') }}" class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        <svg class="mr-2 -ml-1 h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
                         </svg>
                         Back to Reports
                     </a>
+                    @if($report->status === 'verified')
+                        <a href="{{ route('reports.edit', $report->id) }}"
+                           onclick="return confirm('WARNING: Editing a verified report can have critical consequences. Are you sure you want to proceed?');"
+                           class="inline-flex items-center px-4 py-2 border border-yellow-400 shadow-sm text-sm font-medium rounded-md text-yellow-800 bg-yellow-100 hover:bg-yellow-200">
+                            <svg class="mr-2 -ml-1 h-5 w-5 text-yellow-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 13h6m2 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                            </svg>
+                            Edit
+                        </a>
+                    @endif
+                    <form action="{{ route('reports.destroy', $report->id) }}" method="POST" onsubmit="return confirm('DANGER: Deleting a report will remove all medical data and cannot be undone. Are you absolutely sure?');" style="display:inline;">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="inline-flex items-center px-4 py-2 border border-red-400 shadow-sm text-sm font-medium rounded-md text-red-800 bg-red-100 hover:bg-red-200">
+                            <svg class="mr-2 -ml-1 h-5 w-5 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Delete
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>

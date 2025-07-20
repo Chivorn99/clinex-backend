@@ -16,7 +16,7 @@ class PatientController extends Controller
     {
         $query = Patient::query();
 
-        // Search by name or patient_id
+        // Search by name, patient_id, or phone
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
@@ -34,7 +34,7 @@ class PatientController extends Controller
         // Order by creation date (latest first)
         $patients = $query->latest()->paginate($request->get('per_page', 15));
 
-        // Add lab reports count to each patient
+        // Add lab reports count and latest report date to each patient
         $patients->getCollection()->transform(function ($patient) {
             $patient->lab_reports_count = $patient->labReports()->count();
             $patient->latest_report_date = $patient->labReports()
@@ -43,11 +43,17 @@ class PatientController extends Controller
             return $patient;
         });
 
-        return response()->json([
-            'success' => true,
-            'data' => $patients,
-            'message' => 'Patients retrieved successfully'
-        ]);
+        // If the request expects JSON, return as API
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'data' => $patients,
+                'message' => 'Patients retrieved successfully'
+            ]);
+        }
+
+        // Otherwise, return the Blade view
+        return view('admin.patient.index', compact('patients'));
     }
 
     /**
@@ -102,14 +108,20 @@ class PatientController extends Controller
             'first_report_date' => $patient->labReports()->oldest()->value('created_at'),
         ];
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'patient' => $patient,
-                'statistics' => $stats
-            ],
-            'message' => 'Patient details retrieved successfully'
-        ]);
+        // If API
+        if (request()->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'patient' => $patient,
+                    'statistics' => $stats
+                ],
+                'message' => 'Patient details retrieved successfully'
+            ]);
+        }
+
+        // For web
+        return view('admin.patients.show', compact('patient', 'stats'));
     }
 
     /**
@@ -142,7 +154,15 @@ class PatientController extends Controller
     }
 
     /**
-     * Update the specified patient
+     * Show the edit form
+     */
+    public function edit(Patient $patient)
+    {
+        return view('admin.patients.edit', compact('patient'));
+    }
+
+    /**
+     * Handle the update
      */
     public function update(Request $request, Patient $patient)
     {
@@ -156,20 +176,13 @@ class PatientController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+            return back()->withErrors($validator)->withInput();
         }
 
-        $patient->update($request->all());
+        $patient->update($validator->validated());
 
-        return response()->json([
-            'success' => true,
-            'data' => $patient->fresh(),
-            'message' => 'Patient updated successfully'
-        ]);
+        return redirect()->route('patients.show', $patient->id)
+            ->with('success', 'Patient updated successfully.');
     }
 
     /**

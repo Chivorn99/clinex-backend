@@ -32,6 +32,7 @@
             }
         }
     </style>
+    <script src="//unpkg.com/alpinejs" defer></script>
 </head>
 
 <body class="bg-gray-100 min-h-screen">
@@ -49,12 +50,35 @@
                     </div>
                 </div>
                 <div class="flex items-center">
-                    <div class="ml-3 relative">
-                        <div class="flex items-center">
+                    <div class="ml-3 relative" x-data="{ open: false }">
+                        <button @click="open = !open" class="flex items-center focus:outline-none">
                             <span class="text-sm text-gray-700 mr-2">{{ Auth::user()->name }}</span>
                             <img class="h-8 w-8 rounded-full object-cover border-2 border-gray-200"
                                 src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF"
                                 alt="{{ Auth::user()->name }}">
+                        </button>
+                        <!-- Dropdown -->
+                        <div x-show="open" @click.away="open = false"
+                            class="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50"
+                            x-cloak>
+                            <div class="py-3 px-4 border-b border-gray-100 flex items-center">
+                                <img class="h-10 w-10 rounded-full object-cover border-2 border-gray-200"
+                                    src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF&size=128"
+                                    alt="{{ Auth::user()->name }}">
+                                <div class="ml-3">
+                                    <div class="text-sm font-medium text-gray-900">{{ Auth::user()->name }}</div>
+                                    <div class="text-xs text-gray-500">{{ Auth::user()->email }}</div>
+                                </div>
+                            </div>
+                            <div class="py-1">
+                                <a href="{{ route('profile.edit') }}"
+                                    class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Edit Profile</a>
+                                <form method="POST" action="{{ route('logout') }}">
+                                    @csrf
+                                    <button type="submit"
+                                        class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Logout</button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -86,7 +110,22 @@
                         </div>
                         <div>
                             <p class="text-sm text-blue-600 font-medium">Recent Reports</p>
-                            <p class="text-2xl font-bold text-gray-900">42</p>
+                            <p class="text-2xl font-bold text-gray-900">{{ $recentReportsCount }}</p>
+                        </div>
+                    </div>
+                    <div class="bg-orange-50 rounded-lg p-4 flex items-center">
+                        <div class="p-3 rounded-lg bg-orange-100 text-orange-600 mr-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24"
+                                stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M5.121 17.804A9 9 0 0112 15a9 9 0 016.879 2.804" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-orange-600 font-medium">Recent Patients</p>
+                            <p class="text-2xl font-bold text-gray-900">{{ $recentPatientsCount }}</p>
                         </div>
                     </div>
 
@@ -99,8 +138,8 @@
                             </svg>
                         </div>
                         <div>
-                            <p class="text-sm text-green-600 font-medium">Processed Reports</p>
-                            <p class="text-2xl font-bold text-gray-900">36</p>
+                            <p class="text-sm text-green-600 font-medium">Verified Reports</p>
+                            <p class="text-2xl font-bold text-gray-900">{{ $verifiedReportsCount }}</p>
                         </div>
                     </div>
 
@@ -113,8 +152,8 @@
                             </svg>
                         </div>
                         <div>
-                            <p class="text-sm text-yellow-600 font-medium">Pending Reports</p>
-                            <p class="text-2xl font-bold text-gray-900">6</p>
+                            <p class="text-sm text-yellow-600 font-medium">Processed Reports</p>
+                            <p class="text-2xl font-bold text-gray-900">{{ $processedReportsCount }}</p>
                         </div>
                     </div>
                 </div>
@@ -125,7 +164,7 @@
         <div class="mb-8 fade-in" style="animation-delay: 0.2s">
             <h2 class="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <a href="{{ route('lab-reports.processor') }}"
+                <!-- <a href="{{ route('lab-reports.processor') }}"
                     class="bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 overflow-hidden group">
                     <div class="flex p-6">
                         <div
@@ -137,8 +176,8 @@
                             </svg>
                         </div>
                         <div class="flex-1">
-                            <h3 class="text-lg font-semibold text-gray-900 mb-1">Process New Lab Report</h3>
-                            <p class="text-gray-600 mb-3">Upload and analyze patient lab reports</p>
+                            <h3 class="text-lg font-semibold text-gray-900 mb-1">Testing Upload</h3>
+                            <p class="text-gray-600 mb-3">Upload and test the engine</p>
                             <div class="flex items-center text-blue-600">
                                 <span class="text-sm font-medium">Get started</span>
                                 <svg class="h-4 w-4 ml-1 transform group-hover:translate-x-1 transition-transform duration-200"
@@ -149,7 +188,7 @@
                             </div>
                         </div>
                     </div>
-                </a>
+                </a> -->
 
                 <a href="{{ route('reports.index') }}"
                     class="bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 overflow-hidden group">
@@ -202,70 +241,44 @@
                         </div>
                     </div>
                 </a>
-
-            </div>
-        </div>
-
-        <!-- Profile & Account Section -->
-        <div class="fade-in" style="animation-delay: 0.3s">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Account Management</h2>
-            <div class="bg-white rounded-xl shadow-lg p-6">
-                <div class="flex items-center mb-6 pb-6 border-b border-gray-200">
-                    <img class="h-16 w-16 rounded-full object-cover border-2 border-gray-200"
-                        src="https://ui-avatars.com/api/?name={{ urlencode(Auth::user()->name) }}&color=7F9CF5&background=EBF4FF&size=128"
-                        alt="{{ Auth::user()->name }}">
-                    <div class="ml-4">
-                        <h3 class="text-lg font-semibold text-gray-900">{{ Auth::user()->name }}</h3>
-                        <p class="text-gray-600">{{ Auth::user()->email }}</p>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <a href="{{ route('profile.edit') }}"
-                        class="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-200">
-                        <div class="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                <a href="{{ route('patients.index') }}"
+                    class="bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 overflow-hidden group">
+                    <div class="flex p-6">
+                        <div
+                            class="bg-gradient-to-br from-orange-500 to-orange-700 text-white p-4 rounded-lg shadow mr-5 group-hover:scale-105 transition-transform duration-300">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24"
                                 stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                             </svg>
                         </div>
-                        <div>
-                            <h4 class="font-medium text-gray-900">Edit Profile</h4>
-                            <p class="text-sm text-gray-600">Update your personal information</p>
-                        </div>
-                    </a>
-
-                    <form method="POST" action="{{ route('logout') }}">
-                        @csrf
-                        <button type="submit"
-                            class="w-full flex items-center p-4 border border-red-200 rounded-lg hover:bg-red-50 transition-colors duration-200">
-                            <div class="bg-red-100 text-red-600 p-2 rounded-md mr-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
-                                    stroke="currentColor">
+                        <div class="flex-1">
+                            <h3 class="text-lg font-semibold text-gray-900 mb-1">Patient Management</h3>
+                            <p class="text-gray-600 mb-3">View and manage all patient</p>
+                            <div class="flex items-center text-orange-600">
+                                <span class="text-sm font-medium">Manage Patient</span>
+                                <svg class="h-4 w-4 ml-1 transform group-hover:translate-x-1 transition-transform duration-200"
+                                    fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                        d="M14 5l7 7m0 0l-7 7m7-7H3" />
                                 </svg>
                             </div>
-                            <div class="text-left">
-                                <h4 class="font-medium text-gray-900">Logout</h4>
-                                <p class="text-sm text-gray-600">Sign out of your account</p>
-                            </div>
-                        </button>
-                    </form>
+                        </div>
+                    </div>
+                </a>
+
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="bg-white py-6 mt-12">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="border-t border-gray-200 pt-6 text-center">
+                    <p class="text-sm text-gray-600">&copy; {{ date('Y') }} Clinex. All rights reserved.</p>
                 </div>
             </div>
-        </div>
+        </footer>
     </div>
-
-    <!-- Footer -->
-    <footer class="bg-white py-6 mt-12">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="border-t border-gray-200 pt-6 text-center">
-                <p class="text-sm text-gray-600">&copy; {{ date('Y') }} ClinicSync. All rights reserved.</p>
-            </div>
-        </div>
-    </footer>
 </body>
 
 </html>

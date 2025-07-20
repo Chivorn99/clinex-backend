@@ -633,4 +633,29 @@ class LabReportController extends Controller
             'message' => 'PDF content retrieved successfully'
         ]);
     }
+
+    public function testExtract(Request $request)
+    {
+        $request->validate([
+            'pdf_file' => 'required|file|mimes:pdf|max:10240',
+        ]);
+
+        $pdfFile = $request->file('pdf_file');
+
+        // Use your extraction engine/service
+        $documentAiService = app(\App\Services\DocumentAiService::class);
+        $extractedData = $documentAiService->processLabReport($pdfFile->getRealPath());
+
+        if (!$extractedData) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to extract data from the document.'
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $extractedData
+        ]);
+    }
 }

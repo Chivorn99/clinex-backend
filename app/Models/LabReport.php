@@ -138,7 +138,7 @@ class LabReport extends Model
         return $query->whereBetween('created_at', [$startDate, $endDate]);
     }
 
-    public function scopeByBatch($query, int $batchId)  // ✅ Add this
+    public function scopeByBatch($query, int $batchId)
     {
         return $query->where('batch_id', $batchId);
     }

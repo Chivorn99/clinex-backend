@@ -226,7 +226,7 @@
                 const formData = new FormData();
                 formData.append('pdf_file', uploadedFile);
 
-                fetch("{{ route('report.process') }}", {
+                fetch("{{ route('lab-reports.test-extract') }}", {
                     method: 'POST',
                     body: formData,
                     headers: {
@@ -234,16 +234,17 @@
                         'Accept': 'application/json',
                     }
                 })
-                    .then(response => {
-                        if (!response.ok) {
-                            return response.json().then(err => { throw new Error(err.message || 'Processing failed.') });
-                        }
-                        return response.json();
-                    })
+                    .then(response => response.json())
                     .then(result => {
+                        console.log(result); // <-- Add this line
                         if (result.success) {
-                            populateDataPanel(result.data);
-                            updateActionButtons('save');
+                            // Display the extracted data as pretty JSON
+                            dataDisplayArea.innerHTML = `
+                                <div class="bg-gray-900 text-white rounded-lg p-6 overflow-x-auto">
+                                    <pre class="text-xs">${JSON.stringify(result.data, null, 2)}</pre>
+                                </div>
+                            `;
+                            updateActionButtons(); // Optionally remove save button
                         } else {
                             throw new Error(result.message || 'Could not extract data from the document.');
                         }

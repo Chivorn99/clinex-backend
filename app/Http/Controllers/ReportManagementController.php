@@ -64,4 +64,20 @@ class ReportManagementController extends Controller
             return back()->with('error', 'Could not download file: ' . $e->getMessage());
         }
     }
+
+    public function edit($id)
+    {
+        $report = LabReport::findOrFail($id);
+        // return your edit view, e.g.:
+        return view('admin.reports.edit', compact('report'));
+    }
+
+    public function destroy($id)
+    {
+        $report = LabReport::findOrFail($id);
+        // Add any additional checks or logic here
+        $report->delete();
+
+        return redirect()->route('reports.index')->with('success', 'Report deleted successfully.');
+    }
 }
